@@ -47,10 +47,9 @@ Step-by-Step Reproduction
 
 See:
 
-```
-evidence/step1_api_gateway.png
 
-```
+[Step 1 api gateway](/vulnerabilities/lesson1_event_injection/evidence/step1_api_gateway.png)
+
 
 * * * * *
 
@@ -107,10 +106,8 @@ Content-Type: application/json
 
 See:
 
-```
-evidence/step4_response.png
+[Step 4 response](/vulnerabilities/lesson1_event_injection/evidence/step4_response.png)
 
-```
 
 * * * * *
 
@@ -129,11 +126,7 @@ FILE READ SUCCESS
 
 See:
 
-```
-evidence/step5_cloudwatch.png
-
-```
-
+[Step 5 cloudwatch](/vulnerabilities/lesson1_event_injection/evidence/step5_cloudwatch.png)
 * * * * *
 
 Result (Before Fix)
@@ -160,10 +153,7 @@ serialize.unserialize
 ```
 See:
 
-```
-evidence/unserialize.png
-
-```
+[Line code unserialize](/vulnerabilities/lesson1_event_injection/evidence/unserialize.png)
 
 with:
 
@@ -173,10 +163,8 @@ JSON.parse
 ```
 See:
 
-```
-evidence/JSON.png
 
-```
+[Line code JSON](/vulnerabilities/lesson1_event_injection/evidence/JSON.png)
 
 * * * * *
 
@@ -195,10 +183,8 @@ Result:
 
 See:
 
-```
-evidence/step6_fixed_logs.png
+[Step 6 fixed logs](/vulnerabilities/lesson1_event_injection/evidence/step6_fixed_logs.png)
 
-```
 
 * * * * *
 
