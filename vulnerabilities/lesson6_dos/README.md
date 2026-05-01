@@ -79,7 +79,7 @@ POST /dvsa/order
 
 * * * * *
 
-### ✅ Step 3: Test Request in Postman
+### Step 3: Test Request in Postman
 
 1.  Open Postman
 
@@ -227,7 +227,7 @@ Fix Applied
 
 -   Prevent excessive traffic
 
-📸 See:
+See:
 
 ```
 evidence/api_gateway_after.png
