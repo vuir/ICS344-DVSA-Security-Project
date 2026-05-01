@@ -126,10 +126,9 @@ Content-Type: application/json
 
 See:
 
-```
-evidence/normal_request.png
 
-```
+[Step 3 normal request](/vulnerabilities/lesson6_dos/evidence/step3_normal_request.png)
+
 
 * * * * *
 
@@ -211,10 +210,8 @@ python dos_test.py
 
 See:
 
-```
-evidence/dos_attack_output.png
+[Step 5 dos attack output](/vulnerabilities/lesson6_dos/evidence/step5_dos_attack_output.png)
 
-```
 
 * * * * *
 
@@ -229,10 +226,8 @@ Fix Applied
 
 See:
 
-```
-evidence/api_gateway_after.png
+[Api gateway](/vulnerabilities/lesson6_dos/evidence/api_gateway_after.png)
 
-```
 
 * * * * *
 
@@ -269,10 +264,8 @@ Meaning:
 
 See:
 
-```
-evidence/waf_block.png
+[Waf block run code output](/vulnerabilities/lesson6_dos/evidence/waf_block.png)
 
-```
 
 * * * * *
 
