@@ -1,6 +1,5 @@
 # Lesson 6: Denial of Service (DoS)
 
----
 
 ## 1. Vulnerability Summary
 
@@ -15,9 +14,9 @@ By sending a large number of concurrent requests to the billing API, the backend
 
 ## 2. Impact
 
-- System becomes unstable under load
-- Legitimate users cannot complete transactions
-- Service availability is compromised
+- System becomes unstable under load  
+- Legitimate users cannot complete transactions  
+- Service availability is compromised  
 
 ---
 
@@ -25,30 +24,42 @@ By sending a large number of concurrent requests to the billing API, the backend
 
 The backend lacked proper request control mechanisms:
 
-- No rate limiting at API Gateway
-- No traffic filtering (AWS WAF)
-- Unlimited concurrent request handling
+- No rate limiting at API Gateway  
+- No traffic filtering (AWS WAF)  
+- Unlimited concurrent request handling  
 
-This allowed attackers to flood the system with repeated requests.
+### Why the attack works
+
+When multiple requests are sent at the same time (e.g., 200 concurrent threads), the system cannot process them fast enough.
+
+- AWS Lambda has limited concurrent execution capacity
+- API Gateway forwards all requests without restriction
+- Backend resources (CPU, memory, database connections) get saturated
+
+As a result:
+- Some requests succeed (200 OK)
+- Many fail (500 / 502)
+- Response time increases significantly
 
 ---
 
 ## 4. Environment
 
-- Application: DVSA
-- Region: us-east-1
-- API Endpoint:
-  https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order
+- Application: DVSA  
+- Region: us-east-1  
 
-- Components:
-  - API Gateway
-  - AWS Lambda
-  - DynamoDB
+### API Endpoint
+https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order
 
-### Tools Used:
-- Python (requests library)
-- Browser DevTools (Chrome)
-- Postman (optional)
+### Components
+- API Gateway  
+- AWS Lambda  
+- DynamoDB  
+
+### Tools Used
+- Python (requests library)  
+- Browser DevTools (Chrome)  
+- Postman (optional)  
 
 ---
 
@@ -56,11 +67,13 @@ This allowed attackers to flood the system with repeated requests.
 
 Before starting:
 
-1. Install Python
+1. Install Python  
 2. Install required library:
-   pip install requests
-3. Have access to DVSA application
-4. Have a valid user account
+
+pip install requests
+
+3. Access to DVSA application  
+4. Valid user account  
 
 ---
 
@@ -68,42 +81,40 @@ Before starting:
 
 ### Step 1: Create a New Order
 
-1. Open DVSA application
-2. Add a product to cart
-3. Proceed to checkout
-4. Stop at billing page
+1. Open DVSA application  
+2. Add a product to cart  
+3. Proceed to checkout  
+4. Stop at billing page  
 
 ---
 
 ### Step 2: Capture a Valid Request
 
-1. Open DevTools (F12)
-2. Go to Network tab
-3. Perform billing action
+1. Open DevTools (F12)  
+2. Go to Network tab  
+3. Perform billing action  
 4. Find request:
-   POST /dvsa/order
+
+POST /dvsa/order  
 
 5. Copy:
-   - Authorization token
-   - Request payload
-   - Order ID
+- Authorization token  
+- Request payload  
+- Order ID  
 
 ---
 
 ### Step 3: Test Request in Postman
 
 1. Create POST request:
-   ```bash
-   https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order
-   ```
+https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order  
 
 2. Add headers:
-   ```bash
-   Authorization: <your_token>
-   Content-Type: application/json
-    ```
+Authorization: <your_token>  
+Content-Type: application/json  
+
 3. Add body:
-```bash
+
 {
   "action": "billing",
   "order-id": "<your_order_id>",
@@ -113,11 +124,11 @@ Before starting:
     "cvv": "123"
   }
 }
-```
-4. Click Send
+
+4. Click Send  
 
 Expected result:
-"order already made"
+"order already made"  
 
 Evidence:
 [Step 3 normal request](/vulnerabilities/lesson6_dos/evidence/step3_normal_request.png)
@@ -173,7 +184,7 @@ for i in range(200):
 for t in threads:
     t.join()
 ```
-Run:
+open the script:
 [python dos_test.py](/vulnerabilities/lesson6_dos/dos_test.py)
 
 ---
@@ -182,13 +193,16 @@ Run:
 
 Expected:
 
-- Some requests → 200 OK
-- Many requests → 500 / 502
-- Increased latency
+- Some requests → 200 OK  
+- Many requests → 500 / 502  
+- Increased latency  
+
+Time to reproduce:
+~2–5 seconds depending on network  
 
 Meaning:
-- Backend overloaded
-- System becomes unstable
+- Backend overloaded  
+- System becomes unstable  
 
 Evidence:
 [Step 5 dos attack output](/vulnerabilities/lesson6_dos/evidence/step5_dos_attack_output.png)
@@ -197,21 +211,15 @@ Evidence:
 
 ## 7. Fix Strategy
 
-To prevent DoS attacks:
-
-1. API Gateway Throttling
-   - Limit number of requests per second
-
-2. AWS WAF Rate-Based Rules
-   - Block repeated requests from same IP
-   - Example: 100 requests per 5 minutes
+1. API Gateway Throttling  
+2. AWS WAF Rate-Based Rules  
 
 ---
 
 ## 8. Code / Configuration Changes
 
-- Enabled throttling in API Gateway
-- Added AWS WAF rate-based rule
+- Enabled throttling  
+- Added WAF rule  
 
 Evidence:
 [Api gateway after](/vulnerabilities/lesson6_dos/evidence/api_gateway_after.png)
@@ -221,15 +229,14 @@ Evidence:
 ## 9. Verification After Fix
 
 Run again:
-python dos_test.py
+python dos_test.py  
 
 Expected:
-403 Forbidden
+403 Forbidden  
 
 Meaning:
-- Requests are blocked before reaching backend
-- Attack is successfully mitigated
-
+- Attack blocked  
+- Backend protected  
 
 Evidence:
 [WAF block](/vulnerabilities/lesson6_dos/evidence/waf_block.png)
@@ -238,21 +245,20 @@ Evidence:
 
 ## 10. Security Analysis
 
-- Vulnerability: Denial of Service (DoS)
-- Attack Method: High-volume concurrent requests
-- Root Cause: Missing rate limiting and filtering
-- Impact: Service instability and downtime
-- Fix: API throttling + WAF
-- Result: Requests blocked, system stable
+- Vulnerability: DoS  
+- Attack Method: High concurrent requests  
+- Root Cause: No rate limiting  
+- Impact: System instability  
+- Fix: Throttling + WAF  
+- Result: Stable system  
 
 ---
 
 ## 11. Lessons Learned
 
-- Serverless systems require traffic control
-- Rate limiting is essential for availability
-- WAF provides strong protection against abuse
-- Security must include availability, not only data protection
+- Rate limiting is critical  
+- WAF protects availability  
+- Systems must handle load safely  
 
 ---
 
