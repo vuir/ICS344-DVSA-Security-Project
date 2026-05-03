@@ -1,0 +1,9 @@
+{
+  "method": "POST",
+  "url": "https://<api-id>.execute-api.us-east-1.amazonaws.com/Stage/order",
+  "headers": {
+    "Authorization": "<your_token>",
+    "Content-Type": "application/json"
+  },
+  "body_file": "payloads/rce_payload.json"
+}

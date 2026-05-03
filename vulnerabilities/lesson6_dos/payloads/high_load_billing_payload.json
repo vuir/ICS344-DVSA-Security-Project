@@ -1,0 +1,9 @@
+{
+  "action": "billing",
+  "order-id": "<ORDER_ID>",
+  "data": {
+    "ccn": "4242424242424242",
+    "exp": "03/28",
+    "cvv": "123"
+  }
+}

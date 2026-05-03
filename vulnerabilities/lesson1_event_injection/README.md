@@ -1,23 +1,36 @@
 # Lesson 1 & 9: Event Injection / Vulnerable Dependencies (Remote Code Execution)
 
-> **Lesson 1:** Event Injection
-> **Lesson 9:** Vulnerable Dependencies
-> **Covered together** — both lessons share the same exploit, root cause, and fix.
+> **Lesson 1:** Event Injection  
+> **Lesson 9:** Vulnerable Dependencies  
+> These two lessons are covered together because they share the same exploit, root cause, evidence, and fix.
+
+---
+
+## How to Use This Folder
+
+1. Start with this `README.md` to understand the vulnerability and reproduction steps.
+2. Use the JSON files in `payloads/` when testing the API request.
+3. Use the files in `snippets/` to compare the vulnerable code, fixed code, and validation logic.
+4. Compare your results with the screenshots in the `evidence/` folder.
+5. Apply the fix and repeat the verification steps to confirm that the payload no longer executes.
+
+**Estimated time to reproduce:** 10–15 minutes if the DVSA environment, Postman, and CloudWatch access are ready.
 
 ---
 
 ## 1. Vulnerability Summary
 
-This lesson demonstrates a **Remote Code Execution (RCE)** vulnerability in the DVSA order processing system, caused by insecure deserialization using a vulnerable third-party Node.js library.
+This lesson demonstrates a **Remote Code Execution (RCE)** vulnerability in the DVSA order processing system. The vulnerability is caused by insecure deserialization using the vulnerable third-party Node.js library `node-serialize`.
 
-By injecting a specially crafted JavaScript payload into the `action` field of an API request, an attacker can execute arbitrary code inside the AWS Lambda function, causing:
-- Full execution of attacker-controlled JavaScript inside the Lambda runtime
-- File system operations (`writeFileSync`, `readFileSync`) performed from inside the backend
-- Potential access to cloud resources and sensitive data
+By injecting a specially crafted JavaScript payload into the `action` field of an API request, an attacker can execute arbitrary code inside the AWS Lambda function. This can allow:
 
-The affected component is the `DVSA-ORDER-MANAGER` Lambda function. The root weakness is that user input is passed into `serialize.unserialize()` from the `node-serialize` library, which reconstructs and executes any JavaScript function it finds in the `_$$ND_FUNC$$_` format.
+- Execution of attacker-controlled JavaScript inside the Lambda runtime
+- File system operations such as `writeFileSync` and `readFileSync` inside `/tmp`
+- Potential access to cloud resources and sensitive data available to the Lambda execution role
 
-**Why these two lessons are combined:** Lesson 1 (Event Injection) is the attack itself. Lesson 9 (Vulnerable Dependencies) is the reason the attack is possible — the `node-serialize` package is the vulnerable dependency that enables it. Same exploit, same fix, two lesson perspectives.
+The affected component is the `DVSA-ORDER-MANAGER` Lambda function. The root weakness is that user input is passed into `serialize.unserialize()` from the `node-serialize` package. This library reconstructs JavaScript functions when it sees the `_$$ND_FUNC$$_` marker.
+
+Lesson 1 focuses on the **event injection attack**. Lesson 9 focuses on the **vulnerable dependency** that makes the attack possible.
 
 ---
 
@@ -25,14 +38,16 @@ The affected component is the `DVSA-ORDER-MANAGER` Lambda function. The root wea
 
 The vulnerability exists because of two combined failures:
 
-- **Unsafe deserialization** — the `node-serialize` library reconstructs JavaScript functions from user input and executes them immediately when the string ends with `()`. This is by design in the library, which makes it dangerous for any untrusted input.
-- **No input validation** — the Lambda function passes `event.body` directly into `serialize.unserialize()` without checking its content, type, or structure.
+- **Unsafe deserialization:** `node-serialize` can reconstruct JavaScript functions from serialized input and execute them when the function string ends with `()`.
+- **Missing input validation:** The Lambda function passes `event.body` directly into `serialize.unserialize()` without checking the content, type, or structure first.
 
-### Why the attack works
+### Why the Attack Works
 
-When `node-serialize` encounters the `_$$ND_FUNC$$_` prefix, it wraps the value in a JavaScript `eval()` call internally. If the function string ends with `()`, it is invoked immediately upon deserialization — before any application logic runs. The injected code runs inside the Lambda execution environment with the same IAM permissions as the function itself.
+When `node-serialize` encounters the `_$$ND_FUNC$$_` prefix, it treats the value as a serialized JavaScript function. If the function ends with `()`, it is immediately invoked during deserialization. This happens before the normal application logic continues.
 
-This is also a **Vulnerable Dependency** issue: `node-serialize` is an outdated, unsafe library. Its known-unsafe behavior is documented (CVE-2017-5941). Using it on untrusted input directly introduces RCE.
+Because this execution happens inside AWS Lambda, the injected code runs with the same runtime access and IAM permissions as the `DVSA-ORDER-MANAGER` function.
+
+This is also a vulnerable dependency issue. The application did not need executable deserialization for normal JSON request handling, but the dependency allowed executable content to be reconstructed from user input.
 
 ---
 
@@ -46,7 +61,7 @@ This is also a **Vulnerable Dependency** issue: `node-serialize` is an outdated,
 | Lambda Function | `DVSA-ORDER-MANAGER` |
 | CloudWatch Log Group | `/aws/lambda/DVSA-ORDER-MANAGER` |
 | AWS Services | API Gateway, AWS Lambda, CloudWatch Logs |
-| Tools Used | Postman, AWS CloudWatch Console |
+| Tools Used | Postman, AWS Console, CloudWatch |
 
 **Evidence — API Gateway Invoke URL:**
 
@@ -58,35 +73,42 @@ This is also a **Vulnerable Dependency** issue: `node-serialize` is an outdated,
 
 Before starting:
 
-1. Have access to the DVSA application with a valid user account
-2. Have Postman installed
-3. Have access to AWS CloudWatch Logs in the AWS Console
-4. Know your API Gateway Invoke URL (see Step 1 above or copy from API Gateway → Stages)
+1. Have access to the DVSA application with a valid user account.
+2. Have Postman installed.
+3. Have access to AWS CloudWatch Logs in the AWS Console.
+4. Know the API Gateway Invoke URL from API Gateway → Stages.
+5. Prepare the payload from `payloads/rce_payload.json`.
 
 ---
 
 ## 5. Step-by-Step Reproduction
 
-### Step 1: Get the API Endpoint
+### Step 1 — Get the API Endpoint
 
-1. Go to the AWS Console → **API Gateway**
-2. Select the DVSA API
-3. Click **Stages** in the left menu
-4. Select the `Stage` stage
-5. Copy the **Invoke URL** shown at the bottom
+1. Open the AWS Console.
+2. Go to **API Gateway**.
+3. Select the DVSA API.
+4. Click **Stages** from the left menu.
+5. Select the `Stage` stage.
+6. Copy the **Invoke URL**.
 
-The endpoint you will use is:
-```
+The endpoint format is:
+
+```text
 POST https://<api-id>.execute-api.us-east-1.amazonaws.com/Stage/order
 ```
 
 ---
 
-### Step 2: Prepare the Malicious Payload
+### Step 2 — Prepare the Malicious Payload
 
-The payload embeds a JavaScript function using the `_$$ND_FUNC$$_` marker. When deserialized by `node-serialize`, this function executes immediately.
+Use the payload stored in:
 
-This example writes a file to `/tmp`, reads it back, and logs the result to CloudWatch — proving arbitrary code execution:
+```text
+payloads/rce_payload.json
+```
+
+Payload:
 
 ```json
 {
@@ -95,33 +117,37 @@ This example writes a file to `/tmp`, reads it back, and logs the result to Clou
 }
 ```
 
-Key parts of the payload:
-- `_$$ND_FUNC$$_` — triggers `node-serialize` to treat the value as an executable function
-- `()` at the end — immediately invokes the function upon deserialization
-- `console.error(...)` — writes output to CloudWatch Logs, providing proof of execution
+This payload writes a file to `/tmp`, reads it back, and logs the result to CloudWatch. That proves arbitrary backend code execution.
+
+Key parts:
+
+- `_$$ND_FUNC$$_` tells `node-serialize` to treat the value as a function.
+- `()` immediately executes the function during deserialization.
+- `console.error(...)` writes proof of execution to CloudWatch Logs.
 
 ---
 
-### Step 3: Send the Request via Postman
+### Step 3 — Send the Request in Postman
 
 **Method:** `POST`  
 **URL:** `https://<api-id>.execute-api.us-east-1.amazonaws.com/Stage/order`
 
 **Headers:**
-```
+
+```text
 Authorization: <your_token>
 Content-Type: application/json
 ```
 
-**Body:** Paste the malicious payload from Step 2.
+**Body:** Paste the content of `payloads/rce_payload.json`.
 
 Click **Send**.
 
 ---
 
-### Step 4: Observe the API Response
+### Step 4 — Observe the API Response
 
-The API will return a generic error — this is expected and does not mean the attack failed.
+The API returns a generic error response:
 
 ```json
 {
@@ -129,7 +155,7 @@ The API will return a generic error — this is expected and does not mean the a
 }
 ```
 
-The error appears because the injected code disrupts the normal request flow, but the code already executed before the error was thrown.
+This error is expected. It does not mean the exploit failed. The injected code executes before the request fails.
 
 **Evidence:**
 
@@ -137,22 +163,25 @@ The error appears because the injected code disrupts the normal request flow, bu
 
 ---
 
-### Step 5: Verify Code Execution in CloudWatch
+### Step 5 — Verify Code Execution in CloudWatch
 
-This is where the proof lives. Go to:
+Open:
 
-**AWS Console → CloudWatch → Log Groups → `/aws/lambda/DVSA-ORDER-MANAGER`**
-
-Open the latest log stream. Look for the injected message:
-
+```text
+AWS Console → CloudWatch → Log Groups → /aws/lambda/DVSA-ORDER-MANAGER
 ```
+
+Open the latest log stream and search for:
+
+```text
 FILE READ SUCCESS: You are reading the contents of my hacked file!
 ```
 
 This confirms that:
-- The injected JavaScript executed inside the Lambda runtime
-- File system operations (`writeFileSync`, `readFileSync`) were performed
-- The attacker-controlled code ran before the error response was returned
+
+- The injected JavaScript executed inside Lambda.
+- The payload wrote and read a file inside `/tmp`.
+- The backend executed attacker-controlled code before returning the error response.
 
 **Evidence:**
 
@@ -160,35 +189,49 @@ This confirms that:
 
 ---
 
-## 6. Attack Result Summary (Before Fix)
+## 6. Attack Result Summary Before Fix
 
-| What was attempted | Result |
+| What Was Attempted | Result |
 |---|---|
-| Write file to `/tmp` inside Lambda | Succeeded |
-| Read file back and log it | Succeeded — visible in CloudWatch |
-| API response | Generic `500 Internal Server Error` (hides execution) |
-| Backend code execution | Confirmed via CloudWatch |
+| Write a file to `/tmp` inside Lambda | Succeeded |
+| Read the file back | Succeeded |
+| Log output to CloudWatch | Succeeded |
+| API response | `500 Internal Server Error` |
+| Backend code execution | Confirmed through CloudWatch |
 
-The API response looks like a normal failure, but the backend confirms the attack succeeded. This is a dangerous pattern — the error response provides no indication that anything executed.
+The response looks like a normal backend failure, but CloudWatch proves that code execution happened.
 
 ---
 
 ## 7. Fix Strategy
 
-The fix must be applied in the `DVSA-ORDER-MANAGER` Lambda function input parsing logic:
+The fix must be applied in the `DVSA-ORDER-MANAGER` Lambda function input parsing logic.
 
-- **Remove `node-serialize`** — this library must not be used on any untrusted input
-- **Replace with `JSON.parse()`** — treats input strictly as data, cannot execute functions
-- **Validate input** — reject any input containing `_$$ND_FUNC$$_` or non-string `action` fields
-- **Audit dependencies** — regularly scan `package.json` for known-vulnerable packages using tools like `npm audit`
+Required fixes:
+
+- Remove `node-serialize` from request parsing.
+- Replace `serialize.unserialize(event.body)` with `JSON.parse(event.body)`.
+- Stop unserializing headers and use `event.headers` directly.
+- Validate the `action` field before using it.
+- Remove the vulnerable dependency from `package.json` if it is no longer used.
+- Run dependency auditing commands regularly.
+
+Helpful files:
+
+```text
+snippets/vulnerable_unserialize.js
+snippets/fixed_json_parse.js
+snippets/input_validation_snippet.js
+snippets/dependency_audit_commands.md
+```
 
 ---
 
 ## 8. Code / Config Changes
 
-**Location:** Lambda function `DVSA-ORDER-MANAGER` — `order-manager.js`, input parsing (lines 10–11)
+**Location:** `DVSA-ORDER-MANAGER` → `order-manager.js`, input parsing logic.
 
-**Before (vulnerable):**
+### Before Fix
 
 ```javascript
 const serialize = require('node-serialize');
@@ -196,26 +239,34 @@ var req = serialize.unserialize(event.body);
 var headers = serialize.unserialize(event.headers);
 ```
 
-**Evidence — vulnerable code highlighted:**
+**Evidence — vulnerable code using `serialize.unserialize`:**
 
-![Vulnerable Code - serialize.unserialize](evidence/unserialize.png)
+![Vulnerable Code - serialize.unserialize](evidence/vulnerable_unserialize.png)
 
-**After (fixed):**
+---
+
+### After Fix
 
 ```javascript
 var req = JSON.parse(event.body);
 var headers = event.headers;
 ```
 
-**Evidence — fixed code with JSON.parse:**
+**Evidence — fixed code using `JSON.parse`:**
 
-![Fixed Code - JSON.parse](evidence/JSON.png)
+![Fixed Code - JSON.parse](evidence/fixed_json_parse.png)
 
-**Summary of all changes:**
-- Removed `node-serialize` from the deserialization path entirely
-- Replaced `serialize.unserialize(event.body)` with `JSON.parse(event.body)` — data only, no function execution possible
-- Replaced `serialize.unserialize(event.headers)` with direct `event.headers` access
-- The `node-serialize` package can be removed from `package.json` and `node_modules` entirely
+---
+
+### Additional Validation
+
+```javascript
+if (typeof req.action !== 'string' || req.action.includes('_$$ND_FUNC$$_')) {
+    throw new Error('Invalid action field');
+}
+```
+
+This validation is defense-in-depth. The main fix is removing `node-serialize` from untrusted input handling.
 
 ---
 
@@ -230,19 +281,20 @@ Send the same malicious payload again using Postman:
 }
 ```
 
-Then check CloudWatch Logs.
+Then check the CloudWatch logs.
 
-**Expected result after fix:**
-- No `FILE READ SUCCESS` message in CloudWatch
-- No file operations performed
-- Logs show only normal runtime messages or a safe parsing error
-- Normal order requests continue to work correctly
+Expected result after fix:
 
-**Evidence — CloudWatch after fix (no injection output):**
+- No `FILE READ SUCCESS` message appears.
+- No file operations are performed.
+- The payload is treated as text data instead of executable code.
+- Normal order requests still work.
+
+**Evidence — CloudWatch after fix shows no execution output:**
 
 ![Step 6 - CloudWatch After Fix Shows No Execution](evidence/step6_fixed_logs.png)
 
-**What changed:** Before the fix, `node-serialize` evaluated the payload as JavaScript. After the fix, `JSON.parse()` reads the same string as plain text and the `_$$ND_FUNC$$_` value is treated as a harmless string — no execution occurs.
+Before the fix, `node-serialize` evaluated the payload as JavaScript. After the fix, `JSON.parse()` reads the value as a normal string, so the payload does not execute.
 
 ---
 
@@ -250,57 +302,67 @@ Then check CloudWatch Logs.
 
 ### Intended Logic
 
-Under normal conditions, a user submits an order through the DVSA frontend. The expected flow:
+Normal expected flow:
 
+```text
+Browser → API Gateway → Lambda (DVSA-ORDER-MANAGER) → DynamoDB
+                                                      → CloudWatch
 ```
-Browser → API Gateway → Lambda (DVSA-ORDER-MANAGER) → DynamoDB (order storage)
-                                                      → CloudWatch (logging)
-```
 
-**Security rules the system must enforce:**
-- User input must never be executed as code
-- Input must be parsed safely and treated strictly as data
-- Third-party dependencies must not introduce unsafe execution paths
+Security rules:
 
----
+- User input must never be executed as code.
+- Request bodies must be parsed as data only.
+- Third-party dependencies must not introduce unsafe execution paths.
 
 ### Table 1 — Intended vs. Observed Behavior
 
 | Vulnerability | Intended Rule(s) | Artifacts Used | Normal Behavior Evidence | Exploit Behavior Evidence |
 |---|---|---|---|---|
-| Event Injection / Vulnerable Dependencies (RCE) | The system must never execute user-controlled input. Input must be treated strictly as data and only predefined application logic should run. | Postman requests, API responses, CloudWatch logs, Lambda source code screenshots | Normal requests processed safely; input handled as data; expected response returned without executing arbitrary code | Malicious payload executed inside Lambda — CloudWatch logs confirm file operations (`FILE READ SUCCESS`), proving attacker-controlled code ran inside the Lambda runtime (`step5_cloudwatch.png`) |
-
----
+| Event Injection / Vulnerable Dependencies | User-controlled input must be treated as data only and must never be executed as code. | Postman request, API response, Lambda code screenshots, CloudWatch logs | Normal requests are handled as application data. | Malicious payload executed inside Lambda; CloudWatch logged `FILE READ SUCCESS`. |
 
 ### Table 2 — Deviation Analysis and Fix
 
 | Vulnerability | Why This Is a Deviation | Deviation Class | Fix Applied | Post-Fix Verification | Latency |
 |---|---|---|---|---|---|
-| Event Injection / Vulnerable Dependencies (RCE) | The system deserialized user input using `node-serialize`, which executed embedded JavaScript functions. This violated the rule that user input must be treated as data only, allowing full backend code execution by an unauthenticated attacker. | Intentional Misuse / Security-Relevant Abuse | Removed `node-serialize`; replaced `serialize.unserialize(event.body)` with `JSON.parse(event.body)` in `DVSA-ORDER-MANAGER` | Same payload produces no CloudWatch execution output after fix. No file operations observed. Normal requests still processed correctly. (`step6_fixed_logs.png`) | Not measured |
+| Event Injection / Vulnerable Dependencies | The backend deserialized user input using a dependency that can execute embedded JavaScript functions. | Intentional Misuse / Security-Relevant Abuse | Removed `node-serialize` from request parsing and replaced it with `JSON.parse()`. Added input validation. | Same payload no longer produces CloudWatch execution output. | Not measured |
 
 ---
 
 ## 11. Lessons Learned
 
-The core problem was using a library that was designed to serialize executable code, then applying it to user-controlled API input. `node-serialize` is a known-dangerous library (CVE-2017-5941) — its `unserialize()` function has always been capable of executing embedded functions. Using it on untrusted input is not a misconfiguration; it is a fundamental misuse.
+The core mistake was using a library that can reconstruct executable JavaScript and applying it to user-controlled API input. This made a normal request field become an execution path inside the Lambda runtime.
 
-This lesson also illustrates **Lesson 9** directly: the vulnerability did not exist in the application logic itself — it existed in a dependency. The application code looked reasonable at a glance, but the library it relied on introduced a critical attack surface. This is why dependency auditing matters: `npm audit` would have flagged `node-serialize` immediately.
+This lesson also proves why vulnerable dependencies matter. The application code may look simple, but a dependency can introduce dangerous behavior that changes the security model completely.
 
-In serverless environments, this is especially dangerous because Lambda functions typically have IAM roles with access to S3, DynamoDB, SQS, and other services. A single RCE inside a Lambda function can expose all of those resources. The fix — switching to `JSON.parse()` — is one line of code, but the lesson is much broader: **treat all user input as untrusted data, and treat all dependencies as potential attack surface**.
+In serverless applications, this is especially risky because Lambda functions often have IAM roles that can access other AWS services. A single RCE can become a larger cloud compromise if the function role is over-privileged.
+
+The key lesson is to treat user input as untrusted data and to treat dependencies as part of the attack surface.
 
 ---
 
 ## Repository Structure
 
-```
+```text
 lesson1_event_injection/
 │
-├── README.md                    <- This file (covers Lesson 1 and Lesson 9)
-└── evidence/
-    ├── step1_api_gateway.png    <- API Gateway stage showing the Invoke URL
-    ├── step4_response.png       <- Postman: API returns 500 (code already executed)
-    ├── step5_cloudwatch.png     <- CloudWatch: FILE READ SUCCESS confirms RCE
-    ├── unserialize.png          <- Vulnerable Lambda code using serialize.unserialize
-    ├── JSON.png                 <- Fixed Lambda code using JSON.parse
-    └── step6_fixed_logs.png     <- CloudWatch after fix: no execution output
+├── README.md
+├── evidence/
+│   ├── step1_api_gateway.png
+│   ├── step4_response.png
+│   ├── step5_cloudwatch.png
+│   ├── vulnerable_unserialize.png
+│   ├── fixed_json_parse.png
+│   └── step6_fixed_logs.png
+│
+├── payloads/
+│   ├── normal_order_request.json
+│   ├── postman_request_template.json
+│   └── rce_payload.json
+│
+└── snippets/
+    ├── dependency_audit_commands.md
+    ├── fixed_json_parse.js
+    ├── input_validation_snippet.js
+    └── vulnerable_unserialize.js
 ```

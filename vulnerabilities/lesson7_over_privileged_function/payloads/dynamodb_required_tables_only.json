@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOrdersAndUsersOnly",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:716563790099:table/DVSA-ORDERS-DB",
+        "arn:aws:dynamodb:us-east-1:716563790099:table/DVSA-USERS-DB"
+      ]
+    }
+  ]
+}

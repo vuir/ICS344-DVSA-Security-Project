@@ -4,10 +4,10 @@
 
 1. Read this README from top to bottom.
 2. Follow the reproduction steps in Section 5.
-3. Compare your results with the screenshots in the `evidence/` folder.
-4. Apply the fix shown in Section 8.
-5. Repeat the verification steps in Section 9 to confirm the vulnerability is removed.
-
+3. Use the sample upload files in the `payloads/` folder when reproducing the issue.
+4. Compare your results with the screenshots in the `evidence/` folder.
+5. Apply the S3 configuration fix and Lambda validation fix shown in Section 8.
+6. Repeat the verification steps in Section 9 to confirm the vulnerability is removed.
 
 ---
 
@@ -90,7 +90,7 @@ Before starting:
 
 **Estimated time to reproduce:** 10-15 minutes if the DVSA environment is already deployed.
 
-No helper script was required for this lesson because the vulnerability was reproduced manually using the AWS Management Console, S3, Lambda, and CloudWatch.
+No external helper tool is required for this lesson because the vulnerability can be reproduced manually using the AWS Management Console. The `payloads/` folder contains the sample files to upload, and the `snippets/` folder contains the vulnerable and fixed code examples.
 
 ---
 
@@ -122,10 +122,10 @@ This indicates that the bucket is not locked down as expected and may allow unau
 
 ### Step 3: Upload an Arbitrary Test File
 
-Create a file named:
+Use the sample file:
 
 ```text
-test.raw
+payloads/test.raw
 ```
 
 Upload it to this path inside the S3 bucket:
@@ -145,7 +145,7 @@ After uploading `test.raw`, check the same S3 location.
 **Expected vulnerable behavior:**
 
 - The uploaded file appears in the bucket.
-- No corresponding `.txt` output file is generated.
+- No corresponding `.txt` output file is generated for the malformed file.
 - The backend Lambda function fails because the filename does not match the expected format.
 
 **Evidence:**
@@ -176,10 +176,10 @@ This confirms that the Lambda function attempted to process the uploaded file an
 
 ### Step 6: Upload a Valid Pattern File
 
-Create and upload another file named:
+Use the sample file:
 
 ```text
-12345_abcde.raw
+payloads/12345_abcde.raw
 ```
 
 Upload it to the same S3 path:
@@ -324,10 +324,10 @@ After applying the fixes, repeat the tests using authorized AWS console access.
 
 ### Test 1: Verify Invalid Filename Is Rejected Safely
 
-Upload an invalid file named:
+Use the sample file:
 
 ```text
-badtest.raw
+payloads/badtest.raw
 ```
 
 **Expected result after fix:**
@@ -345,10 +345,10 @@ badtest.raw
 
 ### Test 2: Verify Normal Functionality Still Works
 
-Upload a correctly formatted file, for example:
+Use the sample file:
 
 ```text
-6789_abcde.raw
+payloads/6789_abcde.raw
 ```
 
 **Expected result after fix:**
@@ -408,24 +408,33 @@ The main takeaway is that cloud security requires both **secure service configur
 
 ---
 
-
-
 ## Repository Structure
 
 ```text
 lesson4_insecure_cloud_configuration/
 │
 ├── README.md
-└── evidence/
-    ├── 01_s3_public_access_disabled.png
-    ├── 02_uploaded_test_raw_failure.png
-    ├── 03_cloudwatch_index_error.png
-    ├── 04_valid_pattern_file_processed.png
-    ├── 05_vulnerable_lambda_filename_parsing.png
-    ├── 06_enable_block_public_access_edit.png
-    ├── 07_s3_public_access_enabled_after_fix.png
-    ├── 08_before_code_zoomed.png
-    ├── 09_fixed_lambda_filename_validation.png
-    ├── 10_cloudwatch_invalid_filename_after_fix.png
-    └── 11_valid_file_processed_after_fix.png
+├── evidence/
+│   ├── 01_s3_public_access_disabled.png
+│   ├── 02_uploaded_test_raw_failure.png
+│   ├── 03_cloudwatch_index_error.png
+│   ├── 04_valid_pattern_file_processed.png
+│   ├── 05_vulnerable_lambda_filename_parsing.png
+│   ├── 06_enable_block_public_access_edit.png
+│   ├── 07_s3_public_access_enabled_after_fix.png
+│   ├── 08_before_code_zoomed.png
+│   ├── 09_fixed_lambda_filename_validation.png
+│   ├── 10_cloudwatch_invalid_filename_after_fix.png
+│   └── 11_valid_file_processed_after_fix.png
+├── payloads/
+│   ├── README.md
+│   ├── test.raw
+│   ├── 12345_abcde.raw
+│   ├── badtest.raw
+│   └── 6789_abcde.raw
+└── snippets/
+    ├── vulnerable_filename_parsing.py
+    ├── fixed_filename_validation.py
+    ├── s3_block_public_access_fix.md
+    └── optional_aws_cli_upload_examples.sh
 ```

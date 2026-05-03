@@ -1,0 +1,4 @@
+{
+  "action": "get_cart",
+  "cart_id": "test"
+}

