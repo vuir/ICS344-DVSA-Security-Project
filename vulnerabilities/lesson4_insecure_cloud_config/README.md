@@ -8,7 +8,6 @@
 4. Apply the fix shown in Section 8.
 5. Repeat the verification steps in Section 9 to confirm the vulnerability is removed.
 
-> **Important:** Perform these steps only in the authorized DVSA lab environment or another environment where you have permission to test.
 
 ---
 

