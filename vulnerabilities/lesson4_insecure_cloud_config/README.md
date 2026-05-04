@@ -10,6 +10,8 @@
 6. Repeat the verification steps in Section 9 to confirm the vulnerability is removed.
 
 ---
+## Demo Link
+https://youtu.be/3uT4B_eU0GU
 
 ## 1. Vulnerability Summary
 
