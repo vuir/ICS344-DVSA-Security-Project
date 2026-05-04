@@ -16,6 +16,8 @@ A helper script is included as `race_condition_test.sh`. The script is sanitized
 The `payloads/` folder contains reusable JSON request examples, and the `snippets/` folder contains copy/paste commands and code snippets for the vulnerable and fixed logic.
 
 ---
+## Demo link
+https://youtu.be/-GrmIyfHG7I
 
 ## 1. Vulnerability Summary
 
